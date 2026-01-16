@@ -101,7 +101,8 @@ class TaskManager:
         self,
         task_type: TaskType,
         document_path: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        task_id: Optional[str] = None  # 可选：如果已有task_id，使用它
     ) -> str:
         """
         创建新任务
@@ -110,30 +111,42 @@ class TaskManager:
             task_type: 任务类型
             document_path: 文档路径（可选）
             metadata: 元数据（可选）
+            task_id: 任务ID（可选，如果已有则使用）
             
         Returns:
             任务ID
         """
-        task_id = self.database.create_task(
+        # 生成或使用已有的任务ID
+        if not task_id:
+            import uuid
+            task_id = str(uuid.uuid4())
+        
+        # 准备参数
+        parameters = metadata or {}
+        if document_path:
+            parameters['document_path'] = document_path
+        
+        # 创建任务
+        self.database.create_task(
+            task_id=task_id,
             task_type=task_type,
-            document_path=document_path,
-            metadata=metadata or {}
+            parameters=parameters
         )
         
         # 初始化检查点
         self._save_checkpoint(task_id, TaskState.CREATED, {
             "created_at": datetime.now().isoformat(),
-            "task_type": task_type,
+            "task_type": task_type.value,
             "document_path": document_path
         })
         
         self.logger.info(
             f"任务已创建 | "
             f"task_id: {task_id} | "
-            f"类型: {task_type} | "
+            f"类型: {task_type.value} | "
             f"文档: {document_path}",
             task_id=task_id,
-            task_type=task_type
+            task_type=task_type.value
         )
         
         return task_id
@@ -349,6 +362,19 @@ class TaskManager:
         if failed_at_state:
             context["failed_at_state"] = failed_at_state.value
         
+        # 先检查任务状态是否存在
+        current_state = self.get_task_state(task_id)
+        if current_state is None:
+            # 如果状态不存在，直接保存失败状态
+            self._save_checkpoint(task_id, TaskState.FAILED, context)
+            self._update_database_status(task_id, TaskState.FAILED)
+            self.logger.error(
+                f"任务标记为失败 | task_id: {task_id} | 错误: {error}",
+                task_id=task_id,
+                error=error
+            )
+            return True
+        
         success = self.transition_state(task_id, TaskState.FAILED, context)
         
         if success:
@@ -376,6 +402,15 @@ class TaskManager:
         
         checkpoint = self.database.get_checkpoint(task_id)
         
+        # 从 parameters 中获取 document_path
+        parameters = task.get("parameters", {})
+        if isinstance(parameters, str):
+            import json
+            try:
+                parameters = json.loads(parameters)
+            except:
+                parameters = {}
+        
         return {
             "task_id": task_id,
             "type": task.get("type"),
@@ -383,7 +418,7 @@ class TaskManager:
             "current_state": checkpoint.get("current_state") if checkpoint else None,
             "created_at": task.get("created_at"),
             "updated_at": task.get("updated_at"),
-            "document_path": task.get("document_path"),
+            "document_path": parameters.get("document_path"),  # 从 parameters 获取
             "metadata": task.get("metadata", {}),
             "checkpoint": checkpoint
         }
@@ -392,7 +427,10 @@ class TaskManager:
         self,
         status: Optional[TaskStatus] = None,
         task_type: Optional[TaskType] = None,
-        limit: int = 100
+        limit: int = 20,
+        offset: int = 0,
+        order_by: str = "created_at",
+        order_dir: str = "desc"
     ) -> List[Dict[str, Any]]:
         """
         列出任务列表
@@ -401,6 +439,9 @@ class TaskManager:
             status: 筛选状态（可选）
             task_type: 筛选类型（可选）
             limit: 最大数量
+            offset: 偏移量（用于分页）
+            order_by: 排序字段
+            order_dir: 排序方向（asc/desc）
             
         Returns:
             任务列表
@@ -408,19 +449,29 @@ class TaskManager:
         tasks = self.database.list_tasks(
             status=status,
             task_type=task_type,
-            limit=limit
+            limit=limit,
+            offset=offset,
+            order_by=order_by,
+            order_dir=order_dir
         )
         
-        return [
-            {
+        result = []
+        for t in tasks:
+            # 获取检查点信息以显示当前步骤
+            checkpoint = self.database.get_checkpoint(t["task_id"])
+            current_state = checkpoint.get("current_state") if checkpoint else None
+            
+            result.append({
                 "task_id": t["task_id"],
-                "type": t["type"],
+                "type": t.get("task_type"),
                 "status": t["status"],
+                "current_state": current_state,
+                "document_path": t.get("parameters", {}).get("document_path") if t.get("parameters") else None,
                 "created_at": t["created_at"],
                 "updated_at": t["updated_at"]
-            }
-            for t in tasks
-        ]
+            })
+        
+        return result
     
     def get_task_statistics(self) -> Dict[str, Any]:
         """
@@ -454,6 +505,65 @@ class TaskManager:
                 stats["by_state"][state] = stats["by_state"].get(state, 0) + 1
         
         return stats
+    
+    def delete_task(self, task_id: str) -> bool:
+        """
+        删除任务
+        
+        Args:
+            task_id: 任务ID
+            
+        Returns:
+            删除是否成功
+        """
+        try:
+            # 检查任务状态，只能删除已完成、失败或取消的任务
+            task = self.database.get_task(task_id)
+            if not task:
+                self.logger.warning(f"任务不存在 | task_id: {task_id}", task_id=task_id)
+                return False
+            
+            task_status = TaskStatus(task["status"])
+            if task_status == TaskStatus.RUNNING:
+                self.logger.warning(
+                    f"不能删除运行中的任务 | task_id: {task_id} | 状态: {task_status}",
+                    task_id=task_id
+                )
+                return False
+            
+            # 删除数据库记录
+            success = self.database.delete_task(task_id)
+            
+            if success:
+                # 删除任务文件（可选）
+                try:
+                    self.storage.cleanup_task(task_id, keep_reports=False)
+                except Exception as e:
+                    self.logger.warning(f"清理任务文件失败: {e}", task_id=task_id)
+                
+                self.logger.info(f"任务已删除 | task_id: {task_id}", task_id=task_id)
+            
+            return success
+        except Exception as e:
+            self.logger.error(f"删除任务失败: {e}", task_id=task_id, exc_info=True)
+            return False
+    
+    def count_tasks(
+        self,
+        status: Optional[TaskStatus] = None,
+        task_type: Optional[TaskType] = None
+    ) -> int:
+        """
+        统计任务数量
+        
+        Args:
+            status: 筛选状态（可选）
+            task_type: 筛选类型（可选）
+            
+        Returns:
+            任务数量
+        """
+        return self.database.count_tasks(status=status, task_type=task_type)
     
     def register_state_handler(
         self,

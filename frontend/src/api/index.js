@@ -2,7 +2,7 @@ import axios from 'axios'
 
 const api = axios.create({
   baseURL: '/api',
-  timeout: 30000
+  timeout: 600000  // 10分钟超时
 })
 
 // 请求拦截器
@@ -48,6 +48,10 @@ export default {
     return api.post(`/tasks/${taskId}/cancel`, { reason })
   },
   
+  deleteTask(taskId) {
+    return api.delete(`/tasks/${taskId}`)
+  },
+  
   // 统计相关
   getStatistics() {
     return api.get('/statistics')
@@ -68,5 +72,20 @@ export default {
       params: { format },
       responseType: 'blob'
     })
+  },
+  
+  // 获取原生 JSON 报告数据
+  getReportData(taskId) {
+    return api.get(`/reports/${taskId}/raw`)
+  },
+  
+  // 获取 Markdown 报告
+  getMarkdownReport(taskId) {
+    return api.get(`/reports/${taskId}/markdown`)
+  },
+  
+  // 生成 LLM 分析
+  analyzeReport(taskId) {
+    return api.post(`/reports/${taskId}/analyze`)
   }
 }

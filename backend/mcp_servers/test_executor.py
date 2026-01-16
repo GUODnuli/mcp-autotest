@@ -24,6 +24,7 @@ from backend.common.test_models import (
     calculate_pass_rate
 )
 from backend.common.engines import RequestsEngine, HttpRunnerEngine
+from backend.common.report_generator import ReportGenerator
 
 
 class TestExecutor(MCPServer):
@@ -228,10 +229,18 @@ class TestExecutor(MCPServer):
                 testcase = TestCase(**tc_data)
                 testcases.append(testcase)
             except Exception as e:
-                self.logger.warning(
-                    f"测试用例解析失败: {str(e)} | 数据: {tc_data}",
-                    task_id=task_id
-                )
+                # 避免 loguru 格式化冲突，使用字符串拼接
+                try:
+                    import json
+                    tc_data_str = json.dumps(tc_data, ensure_ascii=False)
+                    log_msg = "测试用例解析失败: " + str(e) + " | 数据: " + tc_data_str
+                    from loguru import logger
+                    logger.opt(raw=True).warning(log_msg + "\n")
+                except:
+                    self.logger.warning(
+                        f"测试用例解析失败: {str(e)}",
+                        task_id=task_id
+                    )
         
         if not testcases:
             return {
@@ -260,8 +269,27 @@ class TestExecutor(MCPServer):
         # 生成测试报告
         report = self._generate_report(task_id, results, duration)
         
-        # 保存报告
+        # 保存 JSON 报告
         report_path = self.storage.save_test_report(task_id, report.model_dump())
+        
+        # 生成并保存 Markdown 报告
+        try:
+            report_generator = ReportGenerator(logger=self.logger)
+            markdown_content = report_generator.generate_markdown(report)
+            md_report_path = self.storage.save_report(
+                task_id=task_id,
+                report_content=markdown_content,
+                report_format="md"
+            )
+            self.logger.info(
+                f"Markdown 报告已生成 | task_id: {task_id} | 路径: {md_report_path}",
+                task_id=task_id
+            )
+        except Exception as e:
+            self.logger.warning(
+                f"Markdown 报告生成失败 | task_id: {task_id} | 错误: {str(e)}",
+                task_id=task_id
+            )
         
         self.logger.info(
             f"测试执行完成 | "

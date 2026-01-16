@@ -397,14 +397,19 @@ class VectorDB:
         # 构建文档内容
         document = self._build_interface_document(interface_name, interface_data)
         
-        # 构建元数据
+        # 构建元数据（ChromaDB 只支持 str/int/float/bool 类型）
         metadata = {
             "type": "interface",
             "interface_name": interface_name,
+            "method": interface_data.get("method", ""),
+            "path": interface_data.get("path", ""),
             "task_id": task_id,
-            "created_at": self._get_timestamp(),
-            "tags": interface_data.get("tags", [])
+            "created_at": self._get_timestamp()
         }
+        
+        # 列表类型需要转换为字符串
+        if "tags" in interface_data and interface_data["tags"]:
+            metadata["tags"] = ",".join(str(t) for t in interface_data["tags"])
         
         # 添加到向量库
         ids = self.backend.add_documents([document], [metadata])
@@ -432,14 +437,18 @@ class VectorDB:
         # 构建文档内容
         document = self._build_testcase_document(testcase_id, testcase_data)
         
-        # 构建元数据
+        # 构建元数据（ChromaDB 只支持 str/int/float/bool 类型）
         metadata = {
             "type": "testcase",
             "testcase_id": testcase_id,
+            "interface_name": testcase_data.get("interface_name", ""),
             "task_id": task_id,
-            "created_at": self._get_timestamp(),
-            "tags": testcase_data.get("tags", [])
+            "created_at": self._get_timestamp()
         }
+        
+        # 列表类型需要转换为字符串
+        if "tags" in testcase_data and testcase_data["tags"]:
+            metadata["tags"] = ",".join(str(t) for t in testcase_data["tags"])
         
         # 添加到向量库
         ids = self.backend.add_documents([document], [metadata])
@@ -521,17 +530,28 @@ class VectorDB:
         """构建接口文档文本"""
         parts = [
             f"接口名称: {interface_name}",
-            f"路径: {interface_data.get('interface_path', '')}",
+            f"路径: {interface_data.get('path', '')}",
             f"方法: {interface_data.get('method', '')}",
             f"描述: {interface_data.get('description', '')}",
         ]
         
         # 添加参数信息
-        if "parameters" in interface_data:
+        if "parameters" in interface_data and interface_data["parameters"]:
             params = interface_data["parameters"]
-            if params:
-                param_str = ", ".join([p.get("name", "") for p in params])
-                parts.append(f"参数: {param_str}")
+            if isinstance(params, list):
+                param_str = ", ".join([p.get("name", "") for p in params if isinstance(p, dict)])
+                if param_str:
+                    parts.append(f"参数: {param_str}")
+        
+        # 添加请求体信息
+        if "request_body" in interface_data and interface_data["request_body"]:
+            req_body = interface_data["request_body"]
+            if isinstance(req_body, dict) and "properties" in req_body:
+                props = req_body["properties"]
+                if isinstance(props, dict):
+                    prop_names = ", ".join(props.keys())
+                    if prop_names:
+                        parts.append(f"请求字段: {prop_names}")
         
         return " | ".join(parts)
     

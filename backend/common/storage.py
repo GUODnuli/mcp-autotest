@@ -619,6 +619,10 @@ class StorageManager:
         if not task_dir:
             task_dir = self.create_task_directory(task_id)
         
+        # 确保 testcases 子目录存在
+        testcases_dir = Path(task_dir) / "testcases"
+        testcases_dir.mkdir(parents=True, exist_ok=True)
+        
         # 清理接口名称中的特殊字符
         safe_name = "".join(c if c.isalnum() or c in ['_', '-'] else '_' for c in interface_name)
         
@@ -749,11 +753,15 @@ class StorageManager:
         if not task_dir:
             task_dir = self.create_task_directory(task_id)
         
+        # 确保 reports 子目录存在
+        reports_dir = Path(task_dir) / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        
         # 生成文件名
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"test_report_{timestamp}.json"
         
-        file_path = Path(task_dir) / "reports" / filename
+        file_path = reports_dir / filename
         
         try:
             # 验证路径

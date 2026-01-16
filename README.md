@@ -299,8 +299,8 @@ MIT License
 
 ## 👥 联系方式
 
-- 项目地址：https://github.com/yourusername/mcp-autotest
-- 问题反馈：https://github.com/yourusername/mcp-autotest/issues
+- 项目地址：https://github.com/GUODnuli/mcp-autotest
+- 问题反馈：https://github.com/GUODnuli/mcp-autotest/issues
 
 ## 🙏 致谢
 

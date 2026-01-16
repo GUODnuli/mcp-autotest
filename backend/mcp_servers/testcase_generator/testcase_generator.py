@@ -247,6 +247,41 @@ class TestCaseGenerator(MCPServer):
                 inputs=workflow_input,
                 user=f"task_{task_id}"
             )
+            
+            # 先打印基本信息
+            self.logger.info(
+                f"Dify API 响应类型 | task_id: {task_id} | 类型: {type(dify_output).__name__}",
+                task_id=task_id
+            )
+            
+            # 如果是字典，打印键列表
+            if isinstance(dify_output, dict):
+                self.logger.info(
+                    f"Dify API 响应键 | task_id: {task_id} | 键列表: {list(dify_output.keys())}",
+                    task_id=task_id
+                )
+            
+            # 尝试打印完整响应（避免 loguru 格式化冲突）
+            try:
+                import json
+                response_str = json.dumps(dify_output, ensure_ascii=False, indent=2)
+                # 使用 opt(raw=True) 避免 loguru 格式化
+                log_msg = "Dify API 响应 | task_id: " + str(task_id) + " | 响应结构: " + response_str
+                from loguru import logger
+                logger.opt(raw=True).info(log_msg + "\n")
+            except Exception as e:
+                # 如果 JSON 序列化失败，使用 str() 打印（截断）
+                response_str = str(dify_output)
+                if len(response_str) > 1000:
+                    response_str = response_str[:1000] + "...(截断)"
+                log_msg = "Dify API 响应 | task_id: " + str(task_id) + " | 响应结构（原始）: " + response_str
+                from loguru import logger
+                logger.opt(raw=True).info(log_msg + "\n")
+                self.logger.warning(
+                    f"JSON 序列化失败: {str(e)}",
+                    task_id=task_id
+                )
+            
         except DifyAPIError as e:
             return {
                 "success": False,
@@ -255,6 +290,26 @@ class TestCaseGenerator(MCPServer):
         
         # 解析 Dify 输出
         testcases = self._parse_dify_output(dify_output, interface, task_id)
+        
+        # 打印解析结果
+        self.logger.info(
+            f"测试用例解析结果 | task_id: {task_id} | "
+            f"解析到 {len(testcases)} 个测试用例",
+            task_id=task_id
+        )
+        
+        if testcases:
+            # 打印测试用例详细内容（避免 loguru 格式化）
+            try:
+                import json
+                testcases_str = json.dumps(testcases, ensure_ascii=False, indent=2)
+                log_msg = "测试用例详细内容 | task_id: " + str(task_id) + " | 用例列表:\n" + testcases_str
+                from loguru import logger
+                logger.opt(raw=True).info(log_msg + "\n")
+            except Exception as e:
+                log_msg = "测试用例详细内容 | task_id: " + str(task_id) + " | 用例列表（原始）: " + str(testcases)
+                from loguru import logger
+                logger.opt(raw=True).info(log_msg + "\n")
         
         if not testcases:
             return {
@@ -383,7 +438,7 @@ class TestCaseGenerator(MCPServer):
         enhanced_context: str
     ) -> Dict[str, Any]:
         """
-        构建 Dify 工作流输入
+        构建 Dify 工作流输入（适配 user_input 参数名）
         
         Args:
             interface: 接口信息
@@ -419,12 +474,23 @@ class TestCaseGenerator(MCPServer):
             for s in strategies
         ])
         
+        # 构建完整的用户输入
+        user_query = f"""{interface_desc}
+
+# 测试策略
+{strategy_desc}
+
+# 生成要求
+- 每种策略生成 {count_per_strategy} 个测试用例
+- 输出格式: JSON
+"""
+        
+        if enhanced_context:
+            user_query += f"\n\n# 参考信息\n{enhanced_context}"
+        
+        # 适配 Dify 工作流的 user_input 参数名
         return {
-            "interface_info": interface_desc,
-            "test_strategies": strategy_desc,
-            "count_per_strategy": str(count_per_strategy),
-            "enhanced_context": enhanced_context,
-            "output_format": "JSON"
+            "user_input": user_query
         }
     
     def _parse_dify_output(
@@ -447,26 +513,66 @@ class TestCaseGenerator(MCPServer):
         testcases = []
         
         # 尝试从输出中提取测试用例
-        output_text = dify_output.get("testcases", dify_output.get("output", ""))
+        # 先尝试从 Dify 的标准响应格式中提取
+        output_text = None
         
+        # 格式 1: {"data": {"outputs": {"text": "..."}}}
+        if isinstance(dify_output, dict) and "data" in dify_output:
+            outputs = dify_output.get("data", {}).get("outputs", {})
+            if "text" in outputs:
+                output_text = outputs["text"]
+        
+        # 格式 2: {"testcases": [...]}
+        if output_text is None:
+            output_text = dify_output.get("testcases", dify_output.get("output", ""))
+        
+        # 如果是字符串，尝试解析为 JSON
         if isinstance(output_text, str):
-            # 尝试解析 JSON
+            # 先尝试直接解析
             try:
-                # 查找 JSON 数组
-                import re
-                json_match = re.search(r'\[[\s\S]*\]', output_text)
-                if json_match:
-                    parsed = json.loads(json_match.group())
-                    if isinstance(parsed, list):
-                        output_text = parsed
+                parsed = json.loads(output_text)
+                # 检查是否包含 positive/negative 策略
+                if isinstance(parsed, dict) and ("positive" in parsed or "negative" in parsed):
+                    output_text = parsed
+                elif isinstance(parsed, list):
+                    output_text = parsed
             except json.JSONDecodeError:
                 pass
+            
+            # 如果还是字符串，尝试查找 JSON 数组
+            if isinstance(output_text, str):
+                try:
+                    import re
+                    json_match = re.search(r'\[[\s\S]*\]', output_text)
+                    if json_match:
+                        parsed = json.loads(json_match.group())
+                        if isinstance(parsed, list):
+                            output_text = parsed
+                except json.JSONDecodeError:
+                    pass
         
         if isinstance(output_text, list):
             # 已经是列表格式
             raw_testcases = output_text
-        elif isinstance(output_text, dict) and "testcases" in output_text:
-            raw_testcases = output_text["testcases"]
+        elif isinstance(output_text, dict):
+            # 检查是否是按策略分组的格式: {"positive": [...], "negative": [...]}
+            if "positive" in output_text or "negative" in output_text:
+                raw_testcases = []
+                # 合并所有策略的测试用例
+                for strategy in ["positive", "negative", "boundary", "performance"]:
+                    if strategy in output_text:
+                        strategy_cases = output_text[strategy]
+                        if isinstance(strategy_cases, list):
+                            # 为每个用例添加策略标记
+                            for tc in strategy_cases:
+                                if isinstance(tc, dict):
+                                    tc["strategy"] = strategy
+                                    raw_testcases.append(tc)
+            elif "testcases" in output_text:
+                raw_testcases = output_text["testcases"]
+            else:
+                # 尝试从文本中提取
+                raw_testcases = self._extract_testcases_from_text(str(output_text))
         else:
             # 尝试从文本中提取
             raw_testcases = self._extract_testcases_from_text(str(output_text))
@@ -542,23 +648,43 @@ class TestCaseGenerator(MCPServer):
         testcase_id = raw_tc.get("id", f"tc_{task_id}_{interface.get('name', 'unknown')}_{index}_{uuid.uuid4().hex[:8]}")
         
         # 构建测试用例
+        # 提取请求参数（从 raw_tc.request、raw_tc.input 或直接从 raw_tc）
+        request_data = raw_tc.get("request", {})
+        input_data = raw_tc.get("input", {})
+        
+        # 决定请求体的位置（POST/PUT 用 body，GET 用 params）
+        method = interface.get("method", "GET").upper()
+        if method in ["POST", "PUT", "PATCH"]:
+            # POST/PUT 请求，参数放在 body
+            request_body = input_data if input_data else request_data.get("body", raw_tc.get("body", None))
+            request_params = request_data.get("params", raw_tc.get("params", {}))
+        else:
+            # GET/DELETE 请求，参数放在 params
+            request_body = request_data.get("body", raw_tc.get("body", None))
+            request_params = input_data if input_data else request_data.get("params", raw_tc.get("params", {}))
+        
+        # 获取 base_url，如果为空则使用默认值
+        base_url = interface.get("base_url", "") or "http://127.0.0.1:5000"
+        path = interface.get("path", "")
+        full_url = f"{base_url}{path}"
+        
         testcase = {
             "id": testcase_id,
             "name": raw_tc.get("name", f"TestCase_{index + 1}"),
             "description": raw_tc.get("description", ""),
             "interface_name": interface.get("name", ""),
-            "interface_path": interface.get("path", ""),
-            "method": interface.get("method", "GET"),
-            "base_url": interface.get("base_url", ""),
+            "interface_path": path,
+            "method": method,
+            "base_url": base_url,
             "strategy": raw_tc.get("strategy", "positive"),
             "priority": raw_tc.get("priority", "medium"),
             "request": {
-                "url": f"{interface.get('base_url', '')}{interface.get('path', '')}",
-                "method": interface.get("method", "GET"),
-                "headers": raw_tc.get("headers", {}),
-                "params": raw_tc.get("params", {}),
-                "body": raw_tc.get("body", None),
-                "timeout": raw_tc.get("timeout", 30)
+                "url": full_url,  # 完整的 URL
+                "method": method,
+                "headers": request_data.get("headers", raw_tc.get("headers", {})) or {"Content-Type": "application/json"},  # 默认添加 JSON 头
+                "params": request_params,
+                "body": request_body,
+                "timeout": request_data.get("timeout", raw_tc.get("timeout", 30))
             },
             "assertions": self._build_assertions(raw_tc),
             "setup": raw_tc.get("setup", []),
@@ -579,6 +705,20 @@ class TestCaseGenerator(MCPServer):
         Returns:
             断言列表
         """
+        # 运算符映射：将常见的运算符名称映射为 AssertionOperator 枚举值
+        operator_mapping = {
+            "equals": "eq",
+            "equal": "eq",
+            "not_equals": "ne",
+            "not_equal": "ne",
+            "greater_than": "gt",
+            "less_than": "lt",
+            "greater_or_equal": "gte",
+            "less_or_equal": "lte",
+            "contains": "in",
+            "not_contains": "not_in"
+        }
+        
         assertions = []
         
         # 从原始用例中提取断言
@@ -587,10 +727,14 @@ class TestCaseGenerator(MCPServer):
         if isinstance(raw_assertions, list):
             for assertion in raw_assertions:
                 if isinstance(assertion, dict):
+                    # 获取原始运算符并映射
+                    raw_operator = assertion.get("operator", "equals")
+                    operator = operator_mapping.get(raw_operator, raw_operator)
+                    
                     assertions.append({
                         "type": assertion.get("type", "status_code"),
                         "target": assertion.get("target", ""),
-                        "operator": assertion.get("operator", "equals"),
+                        "operator": operator,  # 使用映射后的运算符
                         "expected": assertion.get("expected", ""),
                         "description": assertion.get("description", "")
                     })
@@ -601,7 +745,7 @@ class TestCaseGenerator(MCPServer):
             assertions.append({
                 "type": "status_code",
                 "target": "status_code",
-                "operator": "equals",
+                "operator": "eq",  # 使用正确的枚举值
                 "expected": expected_status,
                 "description": f"验证响应状态码为 {expected_status}"
             })

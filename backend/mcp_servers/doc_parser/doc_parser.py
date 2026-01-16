@@ -17,6 +17,7 @@ from backend.mcp_servers.base import MCPServer, MCPError
 from backend.common.logger import Logger
 from backend.common.database import Database
 from backend.common.storage import StorageManager
+from backend.common.llm_client import LLMClient
 
 
 class DocumentParser(MCPServer):
@@ -36,23 +37,49 @@ class DocumentParser(MCPServer):
         config: Dict[str, Any],
         logger: Logger,
         database: Database,
-        storage: StorageManager
+        storage: StorageManager,
+        llm_client: Optional[LLMClient] = None
     ):
         super().__init__("doc_parser", "1.0.0")
         self.config = config
         self.database = database
         self.storage = storage
+        self.llm_client = llm_client  # LLM 客户端（用于 Word 文档转接口）
         # 覆盖基类的 logger
         self.logger = logger
         
         self.logger.info(
-            "DocumentParser 初始化完成",
-            server="doc_parser"
+            f"DocumentParser 初始化完成 | LLM支持: {llm_client is not None}",
+            server="doc_parser",
+            llm_enabled=llm_client is not None
         )
     
     def get_tools(self) -> List[Dict[str, Any]]:
         """返回支持的工具列表"""
         return [
+            {
+                "name": "parse_document",
+                "description": "自动识别并解析文档（支持OpenAPI/Swagger、Postman、HAR、Word）",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "task_id": {
+                            "type": "string",
+                            "description": "任务ID"
+                        },
+                        "document_path": {
+                            "type": "string",
+                            "description": "文档文件路径"
+                        },
+                        "parse_strategy": {
+                            "type": "string",
+                            "enum": ["auto", "openapi", "postman", "har", "word"],
+                            "description": "解析策略：auto自动识别，或指定格式，默认auto"
+                        }
+                    },
+                    "required": ["document_path"]
+                }
+            },
             {
                 "name": "parse_openapi",
                 "description": "解析 OpenAPI/Swagger 规范文档",
@@ -169,7 +196,10 @@ class DocumentParser(MCPServer):
     def handle_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """处理工具调用"""
         try:
-            if tool_name == "parse_openapi":
+            if tool_name == "parse_document":
+                return self._parse_document(arguments)
+            
+            elif tool_name == "parse_openapi":
                 return self._parse_openapi(arguments)
             
             elif tool_name == "parse_postman":
@@ -200,6 +230,219 @@ class DocumentParser(MCPServer):
             return {
                 "success": False,
                 "error": f"执行异常: {str(e)}"
+            }
+    
+    def _parse_document(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        自动识别并解析文档
+        
+        Args:
+            arguments: 工具参数
+            
+        Returns:
+            解析结果
+        """
+        document_path = arguments.get("document_path")
+        parse_strategy = arguments.get("parse_strategy", "auto")
+        task_id = arguments.get("task_id")
+        
+        if not document_path:
+            return {
+                "success": False,
+                "error": "缺少必需参数: document_path"
+            }
+        
+        self.logger.info(
+            f"开始解析文档 | 路径: {document_path} | 策略: {parse_strategy}",
+            document_path=document_path,
+            parse_strategy=parse_strategy
+        )
+        
+        # 识别文档类型
+        file_path = Path(document_path)
+        if not file_path.exists():
+            return {
+                "success": False,
+                "error": f"文件不存在: {document_path}"
+            }
+        
+        file_ext = file_path.suffix.lower()
+        
+        # 根据策略或文件扩展名选择解析器
+        if parse_strategy == "auto":
+            # 自动识别
+            if file_ext in [".yaml", ".yml", ".json"]:
+                # 尝试读取内容判断类型
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read().strip()
+                    
+                    # 解析为字典
+                    if content.startswith('{'):
+                        data = json.loads(content)
+                    else:
+                        data = yaml.safe_load(content)
+                    
+                    # 判断文档类型
+                    if "openapi" in data or "swagger" in data:
+                        parse_strategy = "openapi"
+                    elif "info" in data and "item" in data:  # Postman Collection
+                        parse_strategy = "postman"
+                    elif "log" in data and "entries" in data.get("log", {}):  # HAR
+                        parse_strategy = "har"
+                    else:
+                        parse_strategy = "openapi"  # 默认尝试 OpenAPI
+                
+                except Exception as e:
+                    self.logger.warning(
+                        f"自动识别失败，默认使用 OpenAPI 解析器 | 错误: {str(e)}",
+                        error=str(e)
+                    )
+                    parse_strategy = "openapi"
+            
+            elif file_ext in [".docx", ".doc"]:
+                parse_strategy = "word"
+            
+            elif file_ext == ".har":
+                parse_strategy = "har"
+            
+            else:
+                return {
+                    "success": False,
+                    "error": f"不支持的文件格式: {file_ext}"
+                }
+        
+        self.logger.info(
+            f"文档类型识别完成 | 使用解析器: {parse_strategy}",
+            parse_strategy=parse_strategy
+        )
+        
+        # 调用相应的解析器
+        if parse_strategy == "openapi":
+            return self._parse_openapi({
+                "task_id": task_id,
+                "file_path": str(document_path)
+            })
+        
+        elif parse_strategy == "postman":
+            return self._parse_postman({
+                "task_id": task_id,
+                "file_path": str(document_path)
+            })
+        
+        elif parse_strategy == "har":
+            return self._parse_har({
+                "task_id": task_id,
+                "file_path": str(document_path)
+            })
+        
+        elif parse_strategy == "word":
+            result = self._parse_word({
+                "task_id": task_id,
+                "file_path": str(document_path),
+                "extract_mode": "structured"
+            })
+            # 转换Word结果为interfaces格式
+            return self._convert_word_to_interfaces(result)
+        
+        else:
+            return {
+                "success": False,
+                "error": f"不支持的解析策略: {parse_strategy}"
+            }
+    
+    def _convert_word_to_interfaces(self, word_result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        将Word文档解析结果转换为接口格式
+        
+        使用 LLM 将 Word 文档内容转换为 API 接口规范
+        
+        Args:
+            word_result: Word解析结果
+            
+        Returns:
+            包含interfaces字段的结果
+        """
+        if not word_result.get("success"):
+            return word_result
+        
+        task_id = word_result.get("task_id")
+        
+        # 检查是否有 LLM 客户端
+        if not self.llm_client:
+            self.logger.warning(
+                f"Word文档需要 LLM 处理，但未配置 LLM 客户端 | task_id: {task_id}",
+                task_id=task_id
+            )
+            # 返回空接口列表，但标记需要 Dify 处理
+            word_result["interfaces"] = []
+            word_result["is_word_document"] = True
+            word_result["requires_dify_processing"] = True
+            return word_result
+        
+        self.logger.info(
+            f"开始使用 LLM 转换 Word 文档为接口 | task_id: {task_id}",
+            task_id=task_id
+        )
+        
+        try:
+            # 提取 Word 内容
+            word_content = word_result.get("content", {})
+            
+            # 调用 LLM 转换
+            llm_result = self.llm_client.word_to_interfaces(
+                word_content=word_content,
+                business_context=None,  # 可从文档标题提取
+                task_id=task_id
+            )
+            
+            if not llm_result.get("success"):
+                self.logger.error(
+                    f"LLM 转换 Word 文档失败 | task_id: {task_id} | 错误: {llm_result.get('error')}",
+                    task_id=task_id,
+                    error=llm_result.get("error")
+                )
+                return {
+                    "success": False,
+                    "error": f"Word 文档转接口失败: {llm_result.get('error')}"
+                }
+            
+            interfaces = llm_result.get("interfaces", [])
+            metadata = llm_result.get("metadata", {})
+            
+            self.logger.info(
+                f"LLM 转换 Word 文档完成 | task_id: {task_id} | "
+                f"接口数: {len(interfaces)} | "
+                f"耗时: {metadata.get('elapsed_seconds', 0):.2f}s | "
+                f"Token估算: {metadata.get('estimated_tokens', 0)}",
+                task_id=task_id,
+                interface_count=len(interfaces),
+                elapsed=metadata.get('elapsed_seconds'),
+                tokens=metadata.get('estimated_tokens')
+            )
+            
+            # 添加接口列表和标记
+            word_result["interfaces"] = interfaces
+            word_result["is_word_document"] = True
+            word_result["llm_processed"] = True
+            word_result["llm_metadata"] = metadata
+            
+            # 如果提取到了接口，更新 success 状态
+            if interfaces:
+                word_result["success"] = True
+            
+            return word_result
+        
+        except Exception as e:
+            self.logger.error(
+                f"Word 文档转接口处理异常 | task_id: {task_id} | 错误: {str(e)}",
+                task_id=task_id,
+                error=str(e),
+                exc_info=True
+            )
+            return {
+                "success": False,
+                "error": f"Word 文档处理异常: {str(e)}"
             }
     
     def _parse_openapi(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -833,13 +1076,49 @@ class DocumentParser(MCPServer):
                     content_length=len(content)
                 )
             elif content_type == "structured":
+                paragraphs = content.get('paragraphs', [])
+                tables = content.get('tables', [])
+                headings = content.get('headings', [])
+                
                 self.logger.info(
-                    f"Word结构化内容提取完成 | 任务ID: {task_id} | 段落: {len(content.get('paragraphs', []))} | 表格: {len(content.get('tables', []))} | 标题: {len(content.get('headings', []))}",
+                    f"Word结构化内容提取完成 | 任务ID: {task_id} | 段落: {len(paragraphs)} | 表格: {len(tables)} | 标题: {len(headings)}",
                     task_id=task_id,
-                    paragraph_count=len(content.get('paragraphs', [])),
-                    table_count=len(content.get('tables', [])),
-                    heading_count=len(content.get('headings', []))
+                    paragraph_count=len(paragraphs),
+                    table_count=len(tables),
+                    heading_count=len(headings)
                 )
+                
+                # 打印标题预览
+                if headings:
+                    heading_preview = [h.get('text', '') for h in headings[:5]]  # 提取文本
+                    self.logger.info(
+                        f"Word标题预览 | 任务ID: {task_id} | 标题: {heading_preview}",
+                        task_id=task_id
+                    )
+                
+                # 打印段落预览（前300字符）
+                if paragraphs:
+                    try:
+                        # 安全提取文本
+                        text_parts = []
+                        for p in paragraphs[:5]:  # 前5个段落
+                            if isinstance(p, dict):
+                                text_parts.append(p.get('text', ''))
+                            elif isinstance(p, str):
+                                text_parts.append(p)
+                        
+                        all_text = ' '.join(text_parts)
+                        text_preview = all_text[:300] if len(all_text) > 300 else all_text
+                        
+                        self.logger.info(
+                            f"Word段落预览 | 任务ID: {task_id} | 内容: {text_preview}",
+                            task_id=task_id
+                        )
+                    except Exception as preview_error:
+                        self.logger.warning(
+                            f"Word段落预览失败 | 任务ID: {task_id} | 错误: {str(preview_error)}",
+                            task_id=task_id
+                        )
             else:  # tables
                 self.logger.info(
                     f"Word表格提取完成 | 任务ID: {task_id} | 表格数: {len(content)}",
@@ -849,6 +1128,8 @@ class DocumentParser(MCPServer):
             
             # 保存提取结果到storage
             import json
+            from pathlib import Path
+            
             storage_data = {
                 "task_id": task_id,
                 "file_path": file_path,
@@ -858,8 +1139,13 @@ class DocumentParser(MCPServer):
                 "doc_info": doc_info
             }
             
+            # 获取任务目录
+            task_dir = self.storage.get_task_directory(task_id)
+            if not task_dir:
+                task_dir = self.storage.create_task_directory(task_id)
+            
             # 保存为JSON文件
-            storage_path = self.storage.get_task_dir(task_id) / "word_content.json"
+            storage_path = Path(task_dir) / "documents" / "word_content.json"
             storage_path.parent.mkdir(parents=True, exist_ok=True)
             with open(storage_path, 'w', encoding='utf-8') as f:
                 json.dump(storage_data, f, ensure_ascii=False, indent=2)

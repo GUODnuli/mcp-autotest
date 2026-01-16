@@ -93,14 +93,20 @@ class DifyClient:
                 if response.status_code == 200:
                     result = response.json()
                     
-                    # 提取输出
+                    # 支持多种响应格式
+                    # 格式1: {"data": {"outputs": {...}}} - 标准工作流
+                    # 格式2: {"text": "..."} - 文本生成工作流
                     if "data" in result and "outputs" in result["data"]:
                         outputs = result["data"]["outputs"]
                         self.logger.info("Dify API 调用成功")
-                        return outputs
+                        return {"data": {"outputs": outputs}}
+                    elif "text" in result:
+                        # 文本生成工作流，包装为标准格式
+                        self.logger.info("Dify API 调用成功（文本格式）")
+                        return {"data": {"outputs": {"text": result["text"]}}}
                     else:
                         self.logger.warning(f"Dify API 响应格式异常: {result}")
-                        return result
+                        return {"data": {"outputs": result}}
                 
                 elif response.status_code == 429:  # Rate limit
                     wait_time = self.backoff_factor ** attempt

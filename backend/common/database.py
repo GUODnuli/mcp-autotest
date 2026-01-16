@@ -383,7 +383,9 @@ class Database:
         status: Optional[TaskStatus] = None,
         task_type: Optional[TaskType] = None,
         limit: int = 100,
-        offset: int = 0
+        offset: int = 0,
+        order_by: str = "created_at",
+        order_dir: str = "desc"
     ) -> List[Dict[str, Any]]:
         """
         列出任务
@@ -393,6 +395,8 @@ class Database:
             task_type: 按类型过滤（可选）
             limit: 返回数量限制
             offset: 偏移量
+            order_by: 排序字段
+            order_dir: 排序方向（asc/desc）
             
         Returns:
             任务列表
@@ -412,7 +416,14 @@ class Database:
                     query += " AND task_type = ?"
                     params.append(task_type.value)
                 
-                query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+                # 验证排序字段和方向
+                valid_order_fields = ["created_at", "updated_at", "task_id", "status"]
+                if order_by not in valid_order_fields:
+                    order_by = "created_at"
+                
+                order_dir = "DESC" if order_dir.lower() == "desc" else "ASC"
+                
+                query += f" ORDER BY {order_by} {order_dir} LIMIT ? OFFSET ?"
                 params.extend([limit, offset])
                 
                 cursor.execute(query, params)
@@ -467,6 +478,45 @@ class Database:
         except Exception as e:
             self.logger.error(f"删除任务失败: {e}", task_id=task_id)
             raise DatabaseError(f"删除任务失败: {e}")
+    
+    def count_tasks(
+        self,
+        status: Optional[TaskStatus] = None,
+        task_type: Optional[TaskType] = None
+    ) -> int:
+        """
+        统计任务数量
+        
+        Args:
+            status: 按状态过滤（可选）
+            task_type: 按类型过滤（可选）
+            
+        Returns:
+            任务数量
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                
+                query = "SELECT COUNT(*) as count FROM tasks WHERE 1=1"
+                params = []
+                
+                if status:
+                    query += " AND status = ?"
+                    params.append(status.value)
+                
+                if task_type:
+                    query += " AND task_type = ?"
+                    params.append(task_type.value)
+                
+                cursor.execute(query, params)
+                result = cursor.fetchone()
+                
+                return result['count'] if result else 0
+        
+        except Exception as e:
+            self.logger.error(f"统计任务数量失败: {e}")
+            return 0
     
     def cleanup_old_tasks(self, retention_days: int = 90) -> int:
         """

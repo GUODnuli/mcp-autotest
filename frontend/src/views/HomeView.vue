@@ -85,10 +85,17 @@ import api from '@/api'
 const router = useRouter()
 
 const handleUploadSuccess = async (response) => {
+  console.log('[HomeView] 上传响应:', response)
+  
   if (response.success) {
     const filePath = response.data.file_path
+    const taskId = response.data.task_id  // 获取上传时生成的task_id
     const fileName = filePath.split('/').pop()
     const isWord = fileName.endsWith('.doc') || fileName.endsWith('.docx')
+    
+    console.log('[HomeView] 文件路径:', filePath)
+    console.log('[HomeView] 任务ID:', taskId)
+    console.log('[HomeView] 是否为Word文档:', isWord)
     
     // Word文档需要先解析再创建任务
     if (isWord) {
@@ -96,9 +103,11 @@ const handleUploadSuccess = async (response) => {
     }
     
     try {
+      console.log('[HomeView] 开始创建任务...')
       const result = await api.createTask({
-        task_type: 'api_test',
+        task_type: 'autotest',  // 使用正确的枚举值
         document_path: filePath,
+        task_id: taskId,  // 传递上传时生成的task_id
         config: {
           test_engine: 'requests',
           parallel_execution: true,
@@ -106,11 +115,25 @@ const handleUploadSuccess = async (response) => {
         }
       })
       
+      console.log('[HomeView] 创建任务响应:', result)
+      console.log('[HomeView] task_id:', result.task_id)
+      console.log('[HomeView] 完整响应结构:', JSON.stringify(result, null, 2))
+      
+      if (!result.task_id) {
+        console.error('[HomeView] 错误：响应中没有task_id！')
+        ElMessage.error('任务创建失败：未返回任务ID')
+        return
+      }
+      
       ElMessage.success('任务创建成功！')
+      console.log('[HomeView] 准备跳转到任务详情页:', `/tasks/${result.task_id}`)
       router.push(`/tasks/${result.task_id}`)
     } catch (error) {
+      console.error('[HomeView] 创建任务异常:', error)
       ElMessage.error('任务创建失败：' + error.message)
     }
+  } else {
+    console.error('[HomeView] 上传失败:', response.message)
   }
 }
 </script>

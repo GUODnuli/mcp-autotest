@@ -236,6 +236,23 @@ class RequestsEngine(TestEngine):
             else:
                 req_kwargs["data"] = request.body
         
+        # 打印完整的请求信息（避免 loguru 格式化冲突）
+        try:
+            import json
+            request_info = {
+                "method": req_kwargs["method"],
+                "url": url,
+                "headers": req_kwargs["headers"],
+                "body": request.body,
+                "query_params": request.query_params or {}
+            }
+            request_str = json.dumps(request_info, ensure_ascii=False, indent=2)
+            log_msg = "发送 HTTP 请求 | 用例ID: " + str(testcase.id) + " | 请求详情:\n" + request_str
+            from loguru import logger
+            logger.opt(raw=True).info(log_msg + "\n")
+        except Exception as e:
+            self.logger.warning(f"请求日志打印失败: {str(e)}")
+        
         # 发送请求
         start_time = time.time()
         raw_response = self.session.request(**req_kwargs)
@@ -258,17 +275,18 @@ class RequestsEngine(TestEngine):
             elapsed=elapsed
         )
         
-        self.logger.debug(
-            f"HTTP 请求完成 | "
-            f"方法: {request.method} | "
-            f"URL: {url} | "
-            f"状态码: {response.status_code} | "
-            f"耗时: {elapsed:.3f}s",
-            method=request.method,
-            url=url,
-            status_code=response.status_code,
-            elapsed=elapsed
-        )
+        # 打印响应信息
+        try:
+            response_info = {
+                "status_code": response.status_code,
+                "elapsed": f"{elapsed:.3f}s",
+                "body": body if isinstance(body, (dict, list)) else str(body)[:200]
+            }
+            response_str = json.dumps(response_info, ensure_ascii=False, indent=2)
+            log_msg = "收到 HTTP 响应 | 用例ID: " + str(testcase.id) + " | 响应详情:\n" + response_str
+            logger.opt(raw=True).info(log_msg + "\n")
+        except Exception as e:
+            self.logger.warning(f"响应日志打印失败: {str(e)}")
         
         return response
     
