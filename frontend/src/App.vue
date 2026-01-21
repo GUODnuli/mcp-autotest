@@ -76,7 +76,7 @@
 </template>
 
 <script setup>
-import { onMounted, computed, ref, watch } from 'vue'
+import { onMounted, onBeforeUnmount, computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useThemeStore } from '@/stores/theme'
@@ -145,6 +145,15 @@ const handleLogout = async () => {
   router.push('/login')
 }
 
+const handleAuthLogout = (event) => {
+  router.push('/login')
+  // 可选：显示提示信息
+  if (event.detail?.reason) {
+    // 如果使用了 Element Plus，可以显示消息提示
+    // ElMessage.warning(event.detail.reason)
+  }
+}
+
 onMounted(() => {
   initTheme()
   // 初始化用户状态
@@ -153,6 +162,13 @@ onMounted(() => {
   if (isLoggedIn.value) {
     loadConversations()
   }
+
+  // 监听登出事件
+  window.addEventListener('auth:logout', handleAuthLogout)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('auth:logout', handleAuthLogout)
 })
 
 // 监听登录状态加载对话列表

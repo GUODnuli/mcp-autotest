@@ -7,26 +7,8 @@ workdir = "./workspace"
 
 # MCP Server 配置列表
 [[agent.mcp_servers]]
-id = "doc_parser"
-command = "python -m mcp_servers.doc_parser"
-transport = "stdio"
-restart_policy = "on-failure"
-
-[[agent.mcp_servers]]
-id = "testcase_gen"
-command = "python -m mcp_servers.testcase_generator"
-transport = "stdio"
-restart_policy = "on-failure"
-
-[[agent.mcp_servers]]
-id = "autotest_exec"
-command = "python -m mcp_servers.autotest_executor"
-transport = "stdio"
-restart_policy = "on-failure"
-
-[[agent.mcp_servers]]
-id = "report_analyzer"
-command = "python -m mcp_servers.report_analyzer"
+id = "document_loader"
+command = "uvx awslabs.document-loader-mcp-server@latest"
 transport = "stdio"
 restart_policy = "on-failure"
 

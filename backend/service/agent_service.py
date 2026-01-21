@@ -9,20 +9,21 @@ import json
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Form, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from backend.agent.task_manager import TaskManager
-from backend.agent.workflow_orchestrator import WorkflowOrchestrator
 from backend.agent.chat_agent import ChatService
+from backend.common.storage import StorageManager
 from backend.common.logger import Logger
 from backend.common.database import Database
+from backend.common.config import ModelConfig
 from backend.auth import auth_router
 from backend.auth.dependencies import get_current_user
 from backend.auth.models import UserResponse
 from backend.agent.conversation_routes import router as conversation_router
+from agentscope.mcp import StdIOStatefulClient
 
 
 # 请求/响应模型
@@ -49,18 +50,20 @@ class AgentService:
     
     def __init__(
         self,
-        task_manager: TaskManager,
-        workflow_orchestrator: WorkflowOrchestrator,
         logger: Logger,
         database: Database,
+        mcp_clients: List[StdIOStatefulClient],
+        storage: StorageManager,
         config: Dict[str, Any],
-        dify_config: Optional[Dict[str, Any]] = None
+        dify_config: Optional[Dict[str, Any]] = None,
+        model_config: Optional[ModelConfig] = None
     ):
-        self.task_manager = task_manager
-        self.workflow_orchestrator = workflow_orchestrator
         self.logger = logger
         self.database = database
+        self.mcp_clients = mcp_clients
+        self.storage = storage
         self.config = config
+        self.model_config = model_config
         
         # 创建 FastAPI 应用
         self.app = FastAPI(
@@ -81,7 +84,11 @@ class AgentService:
         # 初始化聊天服务（使用 ReActAgent）
         self.chat_service: Optional[ChatService] = None
         try:
-            self.chat_service = ChatService(database=self.database)
+            self.chat_service = ChatService(
+                database=self.database,
+                mcp_clients=self.mcp_clients,
+                model_config=self.model_config
+            )
             self.logger.info("ChatService 初始化成功（使用 ReActAgent）", component="AgentService")
         except Exception as e:
             self.logger.warning(
@@ -97,6 +104,9 @@ class AgentService:
         
         # 注册对话历史路由
         self.app.include_router(conversation_router, prefix="/api")
+        
+        # 启动定时清理任务
+        asyncio.create_task(self._periodic_cleanup())
         
         self.logger.info(
             "AgentService 初始化完成 | "
@@ -199,6 +209,46 @@ class AgentService:
                     "X-Accel-Buffering": "no"
                 }
             )
+        
+        @self.app.post("/api/chat/upload")
+        async def upload_chat_file(
+            conversation_id: str = Form(...),
+            file: UploadFile = File(...),
+            current_user: UserResponse = Depends(get_current_user)
+        ):
+            """上传聊天文件"""
+            try:
+                content = await file.read()
+                file_path = self.storage.save_chat_file(
+                    user_id=current_user.user_id,
+                    conversation_id=conversation_id,
+                    filename=file.filename,
+                    file_content=content
+                )
+                return {
+                    "success": True,
+                    "data": {
+                        "filename": file.filename
+                    }
+                }
+            except Exception as e:
+                self.logger.error(f"文件上传失败: {str(e)}", exc_info=True)
+                return {
+                    "success": False,
+                    "message": f"上传失败: {str(e)}"
+                }
+
+    async def _periodic_cleanup(self):
+        """定期清理旧文件（每24小时运行一次）"""
+        while True:
+            try:
+                self.logger.info("开始执行定期清理旧文件任务...")
+                self.storage.cleanup_old_files(days_to_keep=7)
+            except Exception as e:
+                self.logger.error(f"定期清理任务失败: {str(e)}")
+            
+            # 等待 24 小时
+            await asyncio.sleep(24 * 3600)
         
     def run(self, host: str = "0.0.0.0", port: int = 8000, reload: bool = False):
         """

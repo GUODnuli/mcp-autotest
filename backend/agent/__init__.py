@@ -1,20 +1,11 @@
 """
 Agent 核心模块
 
-提供任务管理、工作流编排、MCP 客户端等核心功能。
+提供任务管理、工作流编排等核心功能。
+注意：MCP 客户端已迁移至 AgentScope 原生实现。
 """
 
-from .task_manager import TaskManager, TaskState
-from .workflow_orchestrator import WorkflowOrchestrator, WorkflowStep
-from .mcp_client import MCPClient, MCPClientManager
-from .agent_service import AgentService
+# MCP 客户端已迁移至使用 AgentScope 的 StdIOStatefulClient
+# 不再需要自定义 mcp_client.py
 
-__all__ = [
-    "TaskManager",
-    "TaskState",
-    "WorkflowOrchestrator",
-    "WorkflowStep",
-    "MCPClient",
-    "MCPClientManager",
-    "AgentService"
-]
+__all__ = []

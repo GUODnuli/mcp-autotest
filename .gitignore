@@ -52,6 +52,7 @@ storage/tasks/*
 storage/cache/*
 !storage/tasks/.gitkeep
 !storage/cache/.gitkeep
+storage/chat/*
 
 # Vector DB
 storage/vectordb/chroma.sqlite3

@@ -86,6 +86,12 @@ authApi.interceptors.request.use(
 authApi.interceptors.response.use(
   response => response.data,
   error => {
+    if (error.response?.status === 401 && !error.config?.url?.includes('/login')) {
+      removeToken()
+      window.dispatchEvent(new CustomEvent('auth:logout', { 
+        detail: { reason: error.response?.data?.detail || '会话已过期' }
+      }))
+    }
     console.error('Auth API Error:', error)
     return Promise.reject(error)
   }
@@ -203,6 +209,16 @@ export default {
 
   clearChat(conversationId) {
     return api.post(`/chat/clear/${conversationId}`)
+  },
+
+  // 上传聊天文件
+  uploadChatFile(conversationId, file) {
+    const formData = new FormData()
+    formData.append('conversation_id', conversationId)
+    formData.append('file', file)
+    return api.post('/chat/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
   },
 
   // ==================== 对话历史相关 ====================

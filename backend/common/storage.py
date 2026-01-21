@@ -48,6 +48,7 @@ class StorageManager:
             "templates",
             "vectordb",
             "cache",
+            "chat",
         ]
         
         for dir_name in required_dirs:
@@ -779,6 +780,82 @@ class StorageManager:
         
         except Exception as e:
             raise StorageError(f"保存测试报告失败: {e}")
+
+    def save_chat_file(
+        self,
+        user_id: str,
+        conversation_id: str,
+        filename: str,
+        file_content: bytes
+    ) -> str:
+        """
+        保存聊天中上传的文件
+        
+        Args:
+            user_id: 用户 ID
+            conversation_id: 会话 ID
+            filename: 原始文件名
+            file_content: 文件内容
+            
+        Returns:
+            保存后的文件路径
+        """
+        # 构建目录路径: storage/chat/{user_id}/{conversation_id}
+        chat_dir = self.root_path / "chat" / user_id / conversation_id
+        chat_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 分离文件名和后缀
+        name_part = Path(filename).stem
+        extension = Path(filename).suffix
+        
+        # 加上下划线和时间戳命名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        new_filename = f"{name_part}_{timestamp}{extension}"
+        
+        file_path = chat_dir / new_filename
+        
+        try:
+            # 验证路径安全
+            safe_path = self._validate_path(file_path)
+            
+            with open(safe_path, 'wb') as f:
+                f.write(file_content)
+                
+            self.logger.info(f"聊天文件保存成功 | user_id: {user_id} | conv_id: {conversation_id} | 文件: {new_filename}")
+            return str(safe_path)
+        except Exception as e:
+            raise StorageError(f"保存聊天文件失败: {e}")
+
+    def cleanup_old_files(self, days_to_keep: int = 7):
+        """
+        清理超过指定天数的旧文件（目前主要清理 chat 目录）
+        
+        Args:
+            days_to_keep: 保留天数
+        """
+        chat_root = self.root_path / "chat"
+        if not chat_root.exists():
+            return
+            
+        import time
+        now = time.time()
+        seconds_to_keep = days_to_keep * 24 * 3600
+        
+        count = 0
+        try:
+            for root, dirs, files in os.walk(chat_root):
+                for file in files:
+                    file_path = Path(root) / file
+                    file_mtime = file_path.stat().st_mtime
+                    
+                    if now - file_mtime > seconds_to_keep:
+                        file_path.unlink()
+                        count += 1
+                        
+            if count > 0:
+                self.logger.info(f"成功清理 {count} 个超过 {days_to_keep} 天的旧文件")
+        except Exception as e:
+            self.logger.error(f"清理旧文件时发生错误: {e}")
 
 
 # 全局存储管理器实例

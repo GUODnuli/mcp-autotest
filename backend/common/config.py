@@ -36,6 +36,7 @@ class AgentConfig(BaseConfig):
     class MCPServerConfig(BaseModel):
         id: str
         command: str
+        args: Optional[list[str]] = None  # 支持将命令和参数分开
         transport: str = "stdio"
         health_check_url: Optional[str] = None
         restart_policy: str = "on-failure"
@@ -120,6 +121,14 @@ class WebConfig(BaseConfig):
     static_path: str = "./frontend/dist"
     cors_origins: list[str] = ["*"]
     websocket_enabled: bool = True
+
+
+class ModelConfig(BaseConfig):
+    """模型配置"""
+    model_name: str = "qwen-max"
+    api_key: str = ""
+    stream: bool = True
+    enable_thinking: bool = True
 
 
 class DefaultConfig(BaseConfig):
@@ -402,6 +411,7 @@ def load_all_configs(config_dir: str = "config") -> Dict[str, BaseConfig]:
         'vectordb': VectorDBConfig,
         'testengine': TestEngineConfig,
         'web': WebConfig,
+        'model': ModelConfig,
     }
     
     # 加载所有配置

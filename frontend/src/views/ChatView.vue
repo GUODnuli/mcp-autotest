@@ -8,6 +8,17 @@
           <h1 class="welcome-title">我现在能怎么帮您？</h1>
           
           <div class="prompt-input-container">
+            <!-- 文件预览区 -->
+            <div v-if="selectedFile" class="file-preview-tab">
+              <div class="file-info">
+                <el-icon><Document /></el-icon>
+                <span class="file-name">{{ selectedFile.name }}</span>
+              </div>
+              <button class="cancel-file-btn" @click="cancelFile">
+                <el-icon><Close /></el-icon>
+              </button>
+            </div>
+
             <div class="prompt-input-input-area">
               <textarea
                 ref="inputTextarea"
@@ -20,11 +31,18 @@
             </div>
 
             <div class="prompt-input-action-bar">
+              <button 
+                class="action-btn upload-btn" 
+                @click="triggerFileInput"
+                title="上传文件"
+              >
+                <el-icon><Paperclip /></el-icon>
+              </button>
               <div class="spacer"></div>
               <button 
                 class="action-btn send-btn" 
                 @click="sendMessage" 
-                :disabled="!inputMessage.trim() || loading"
+                :disabled="(!inputMessage.trim() && !selectedFile) || loading"
                 title="发送消息"
               >
                 <el-icon><Top /></el-icon>
@@ -68,8 +86,22 @@
             </div>
           </div>
 
+          <!-- 计划步骤展示组件 -->
+          <PlanStepBar :planData="currentPlanData" />
+
           <div class="bottom-input-wrapper">
             <div class="bottom-input-container">
+              <!-- 文件预览区 -->
+              <div v-if="selectedFile" class="file-preview-tab">
+                <div class="file-info">
+                  <el-icon><Document /></el-icon>
+                  <span class="file-name">{{ selectedFile.name }}</span>
+                </div>
+                <button class="cancel-file-btn" @click="cancelFile">
+                  <el-icon><Close /></el-icon>
+                </button>
+              </div>
+
               <div class="prompt-input-input-area">
                 <textarea
                   ref="bottomInputTextarea"
@@ -82,11 +114,18 @@
               </div>
 
               <div class="prompt-input-action-bar">
+                <button 
+                  class="action-btn upload-btn" 
+                  @click="triggerFileInput"
+                  title="上传文件"
+                >
+                  <el-icon><Paperclip /></el-icon>
+                </button>
                 <div class="spacer"></div>
                 <button 
                   class="action-btn send-btn" 
                   @click="sendMessage" 
-                  :disabled="!inputMessage.trim() || loading"
+                  :disabled="(!inputMessage.trim() && !selectedFile) || loading"
                   title="发送消息"
                 >
                   <el-icon><Top /></el-icon>
@@ -97,6 +136,14 @@
         </template>
       </div>
     </main>
+
+    <!-- 隐藏的文件上传 input -->
+    <input
+      type="file"
+      ref="fileInput"
+      style="display: none"
+      @change="onFileSelected"
+    />
   </div>
 </template>
 
@@ -106,6 +153,7 @@ import { storeToRefs } from 'pinia'
 import api from '@/api'
 import { useChatStore } from '@/stores/chat'
 import MarkdownViewer from '@/components/MarkdownViewer.vue'
+import PlanStepBar from '@/components/PlanStepBar.vue'
 
 const chatStore = useChatStore()
 const { 
@@ -118,9 +166,14 @@ const { loadConversations, startNewChat } = chatStore
 
 const inputMessage = ref('')
 
+const selectedFile = ref(null)
+const fileInput = ref(null)
+
 const inputTextarea = ref(null)
 const bottomInputTextarea = ref(null)
 const messagesContainer = ref(null)
+
+const currentPlanData = ref(null)
 
 const hasMessages = computed(() => messages.value.length > 0)
 
@@ -151,18 +204,53 @@ watch(currentConversationId, async (newId) => {
 
 // 发送消息
 const sendMessage = async () => {
-  if (!inputMessage.value.trim() || loading.value) return
+  if ((!inputMessage.value.trim() && !selectedFile.value) || loading.value) return
 
   isSending.value = true
-  const userMessage = inputMessage.value.trim()
+  let userMessage = inputMessage.value.trim()
+  const hasFile = !!selectedFile.value
+  const currentFile = selectedFile.value
+  
   inputMessage.value = ''
+  selectedFile.value = null
   resetTextareaHeight()
 
   try {
+    // 处理文件上传
+    let fileInfoString = ''
+    if (hasFile) {
+      // 如果没有会话ID，先创建一个，否则上传会失败
+      if (!currentConversationId.value) {
+        try {
+          const newConv = await api.createConversation({ 
+            title: userMessage.substring(0, 50) || currentFile.name 
+          })
+          currentConversationId.value = newConv.conversation_id
+          await loadConversations()
+        } catch (err) {
+          console.error('创建会话失败:', err)
+          throw new Error('无法开始新对话并上传文件')
+        }
+      }
+
+      try {
+        const uploadRes = await api.uploadChatFile(currentConversationId.value, currentFile)
+        if (uploadRes.success) {
+          fileInfoString = `\n\n[文件已上传: ${currentFile.name}]`
+        }
+      } catch (err) {
+        console.error('文件上传失败:', err)
+        // 继续发送消息，但提示上传失败
+        fileInfoString = `\n\n[文件上传失败: ${currentFile.name}]`
+      }
+    }
+
+    const finalMessage = userMessage + fileInfoString
+
     // 添加用户消息
     messages.value.push({
       role: 'user',
-      content: userMessage
+      content: finalMessage
     })
 
     await nextTick()
@@ -186,7 +274,7 @@ const sendMessage = async () => {
         'Authorization': `Bearer ${localStorage.getItem('access_token')}`
       },
       body: JSON.stringify({
-        message: userMessage,
+        message: finalMessage,
         conversation_id: currentConversationId.value || undefined
       })
     })
@@ -219,6 +307,9 @@ const sendMessage = async () => {
                 currentConversationId.value = parsed.conversation_id
                 await loadConversations()
               }
+            } else if (parsed.type === 'plan_update' && parsed.data) {
+              // 处理计划更新
+              currentPlanData.value = parsed.data
             } else if (parsed.type === 'thinking' && parsed.content) {
               // 处理思考过程
               thinkingResponse += parsed.content
@@ -276,6 +367,26 @@ const resetTextareaHeight = () => {
   if (bottomInputTextarea.value) {
     bottomInputTextarea.value.style.height = 'auto'
   }
+}
+
+// 文件处理逻辑
+const triggerFileInput = () => {
+  if (fileInput.value) {
+    fileInput.value.click()
+  }
+}
+
+const onFileSelected = (e) => {
+  const file = e.target.files[0]
+  if (file) {
+    selectedFile.value = file
+  }
+  // 清空 input 使得同一个文件可以重复触发 change
+  e.target.value = ''
+}
+
+const cancelFile = () => {
+  selectedFile.value = null
 }
 
 // 键盘事件处理
@@ -554,5 +665,61 @@ onMounted(() => {
 
 .bottom-input-container {
   max-width: 800px;
+}
+
+/* 文件预览 Tab 样式 */
+.file-preview-tab {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--main-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 6px 12px;
+  margin-bottom: 8px;
+  max-width: fit-content;
+}
+
+.file-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.file-name {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cancel-file-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  margin-left: 8px;
+  transition: background 0.2s;
+}
+
+.cancel-file-btn:hover {
+  background: var(--border-color);
+  color: #f56c6c;
+}
+
+.upload-btn {
+  margin-right: auto;
+}
+
+.upload-btn:hover:not(:disabled) {
+  background: var(--border-color);
+  color: var(--send-btn);
 }
 </style>
