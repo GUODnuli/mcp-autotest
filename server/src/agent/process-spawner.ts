@@ -45,7 +45,13 @@ export function spawnAgentProcess(params: SpawnAgentParams): ChildProcess {
     'Spawning agent process'
   );
 
-  const env = { ...process.env, PYTHONIOENCODING: 'utf-8' };
+  const env = {
+    ...process.env,
+    PYTHONIOENCODING: 'utf-8',
+    PYTHONUTF8: '1',
+    NO_PROXY: 'localhost,127.0.0.1,dashscope.aliyuncs.com,aliyuncs.com',
+    no_proxy: 'localhost,127.0.0.1,dashscope.aliyuncs.com,aliyuncs.com',
+  };
 
   const child = spawn(pythonPath, args, {
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -67,7 +73,7 @@ export function spawnAgentProcess(params: SpawnAgentParams): ChildProcess {
       logStream.write(`[stdout] ${text}`);
       logger.debug(
         { conversationId: params.conversationId.slice(0, 8) },
-        `Agent stdout: ${text.trim().slice(0, 200)}`
+        `Agent stdout: ${text.trim()}`
       );
     });
   }
@@ -79,7 +85,7 @@ export function spawnAgentProcess(params: SpawnAgentParams): ChildProcess {
       logStream.write(`[stderr] ${text}`);
       logger.warn(
         { conversationId: params.conversationId.slice(0, 8) },
-        `Agent stderr: ${text.trim().slice(0, 200)}`
+        `Agent stderr: ${text.trim()}`
       );
     });
   }

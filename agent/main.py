@@ -6,9 +6,20 @@ ChatAgent 入口文件
 迁移自 backend/agent/main.py，更新路径以适配新的目录结构。
 """
 import asyncio
+import socket
 import sys
 from datetime import datetime
 from pathlib import Path
+
+# Force IPv4 to avoid connection issues with Clash TUN Fake IP mode
+_original_getaddrinfo = socket.getaddrinfo
+
+def _ipv4_only_getaddrinfo(*args, **kwargs):
+    results = _original_getaddrinfo(*args, **kwargs)
+    ipv4 = [r for r in results if r[0] == socket.AF_INET]
+    return ipv4 if ipv4 else results
+
+socket.getaddrinfo = _ipv4_only_getaddrinfo
 
 # 确保项目根目录和 agent 目录都在 Python 路径中
 project_root = Path(__file__).parent.parent
