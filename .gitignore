@@ -59,9 +59,8 @@ storage/chat/*
 storage/vectordb/chroma.sqlite3
 storage/vectordb/index/
 
-# Config (保留模板，忽略实际配置)
-config/*.toml
-!config/*.toml.example
+# Autotest settings (may contain user-specific paths/secrets)
+.autotest/settings.json
 
 # Node
 node_modules/

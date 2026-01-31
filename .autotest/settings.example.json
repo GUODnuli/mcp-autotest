@@ -1,0 +1,68 @@
+{
+  "mcpServers": {
+    "document_loader": {
+      "command": "uvx",
+      "args": ["--python", "3.12", "awslabs.document-loader-mcp-server@latest"],
+      "env": {},
+      "enabled": true,
+      "group": "document_tools",
+      "displayName": "文档加载器"
+    }
+  },
+  "toolDisplay": {
+    "names": {
+      "reset_equipped_tools": "重置工具组",
+      "equip_tool_group": "激活工具组",
+      "list_uploaded_files": "列出上传文件",
+      "safe_view_text_file": "查看文件内容",
+      "safe_write_text_file": "写入文件内容",
+      "read_document": "读取文档",
+      "extract_api_spec": "提取接口规范",
+      "validate_api_spec": "校验接口规范",
+      "generate_positive_cases": "生成正向用例",
+      "generate_negative_cases": "生成反向用例",
+      "generate_security_cases": "生成安全用例",
+      "apply_business_rules": "应用业务规则",
+      "execute_api_test": "执行接口测试",
+      "validate_response": "校验响应结果",
+      "capture_metrics": "采集性能指标",
+      "generate_test_report": "生成测试报告",
+      "diagnose_failures": "诊断失败原因",
+      "suggest_improvements": "生成改进建议"
+    },
+    "hidden": ["reset_equipped_tools", "equip_tool_group"]
+  },
+  "testEngine": {
+    "defaultEngine": "requests",
+    "timeout": 600,
+    "maxParallel": 20,
+    "retryOnFailure": true,
+    "maxRetries": 3,
+    "protocolAdapter": {}
+  },
+  "storage": {
+    "rootPath": "./storage",
+    "databasePath": "./storage/tasks.db",
+    "maxTaskRetentionDays": 90,
+    "autoCleanup": true,
+    "upload": {
+      "maxFileSizeMb": 50,
+      "allowedExtensions": [".json", ".yaml", ".yml", ".doc", ".docx"]
+    }
+  },
+  "vectorDb": {
+    "backend": "chromadb",
+    "embeddingModel": "sentence-transformers/all-MiniLM-L6-v2",
+    "collectionName": "mcp_api_test_knowledge",
+    "persistDirectory": "./storage/vectordb",
+    "retrieval": {
+      "topK": 10,
+      "similarityThreshold": 0.7,
+      "tokenBudget": 5000
+    },
+    "update": {
+      "batchSize": 50,
+      "asyncUpdate": true
+    }
+  }
+}

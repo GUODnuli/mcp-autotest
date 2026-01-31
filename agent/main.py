@@ -64,6 +64,7 @@ from tool.report_tools import (
     suggest_improvements
 )
 from tool_registry import setup_toolkit
+from mcp_loader import close_mcp_servers
 from args import get_args
 from model import get_model, get_formatter
 from hook import AgentHooks, studio_pre_print_hook, studio_post_reply_hook
@@ -188,8 +189,9 @@ async def main():
         }
     }
 
-    # 一键配置所有工具和工具组
-    toolkit = setup_toolkit(toolkit, tool_modules, basic_tools)
+    # 一键配置所有工具和工具组（含 MCP 加载）
+    settings_path = str(project_root / ".autotest" / "settings.json")
+    toolkit, mcp_clients = await setup_toolkit(toolkit, tool_modules, basic_tools, settings_path)
 
     # 获取模型
     model = get_model(
@@ -248,6 +250,9 @@ async def main():
         print(f"[ERROR] Agent 执行失败: {e}")
         import traceback
         traceback.print_exc()
+    finally:
+        # 清理 MCP 连接
+        await close_mcp_servers(mcp_clients)
 
     print("=" * 60)
     print("ChatAgent 执行完毕")

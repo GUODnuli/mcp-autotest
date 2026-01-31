@@ -1,5 +1,0 @@
-[model]
-model_name = "qwen-max"
-api_key = "{YOUR_DASHSCOPE_API_KEY}"
-stream = true
-enable_thinking = true
