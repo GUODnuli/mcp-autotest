@@ -8,6 +8,8 @@ export const useChatStore = defineStore('chat', () => {
   const collapsedGroups = ref({})
   const messages = ref([])
   const loading = ref(false)
+  // Pending title updates that arrived before loadConversations() completed
+  const pendingTitleUpdates = ref({})
 
   // 时间分组辅助函数
   const groupConversationsByTime = (conversations) => {
@@ -64,6 +66,14 @@ export const useChatStore = defineStore('chat', () => {
     try {
       const data = await api.listConversations({ limit: 1000 })
       conversations.value = data
+      // Apply any pending title updates that arrived before this load completed
+      const pending = pendingTitleUpdates.value
+      pendingTitleUpdates.value = {}
+      if (Object.keys(pending).length > 0) {
+        conversations.value = conversations.value.map(c =>
+          pending[c.conversation_id] ? { ...c, title: pending[c.conversation_id] } : c
+        )
+      }
     } catch (error) {
       console.error('加载对话列表失败:', error)
     }
@@ -95,9 +105,15 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const updateConversationTitle = (conversationId, title) => {
-    conversations.value = conversations.value.map(c =>
-      c.conversation_id === conversationId ? { ...c, title } : c
-    )
+    const found = conversations.value.some(c => c.conversation_id === conversationId)
+    if (found) {
+      conversations.value = conversations.value.map(c =>
+        c.conversation_id === conversationId ? { ...c, title } : c
+      )
+    } else {
+      // Conversation not yet in store (loadConversations still pending) — queue the update
+      pendingTitleUpdates.value = { ...pendingTitleUpdates.value, [conversationId]: title }
+    }
   }
 
   return {

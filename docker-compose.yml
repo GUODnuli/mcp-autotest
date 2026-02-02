@@ -3,25 +3,25 @@ version: "3.8"
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: mcp-autotest-postgres
+    container_name: testagent-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: mcp_user
       POSTGRES_PASSWORD: mcp_password
-      POSTGRES_DB: mcp_autotest
+      POSTGRES_DB: testagent
     ports:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mcp_user -d mcp_autotest"]
+      test: ["CMD-SHELL", "pg_isready -U mcp_user -d testagent"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   redis:
     image: redis:7-alpine
-    container_name: mcp-autotest-redis
+    container_name: testagent-redis
     restart: unless-stopped
     ports:
       - "6379:6379"

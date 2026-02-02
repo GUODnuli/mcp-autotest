@@ -2,8 +2,8 @@
 """
 设置加载模块
 
-从 .autotest/settings.json 加载项目配置。
-搜索顺序：显式路径 → PROJECT_ROOT/.autotest/settings.json → 空默认值
+从 .testagent/settings.json 加载项目配置。
+搜索顺序：显式路径 → PROJECT_ROOT/.testagent/settings.json → 空默认值
 """
 import json
 import logging
@@ -22,7 +22,7 @@ _DEFAULT_SETTINGS: dict = {
 
 def load_settings(path: str | None = None) -> dict:
     """
-    加载 .autotest/settings.json 配置。
+    加载 .testagent/settings.json 配置。
 
     Args:
         path: 显式配置文件路径。为 None 时自动搜索项目根目录。
@@ -34,7 +34,7 @@ def load_settings(path: str | None = None) -> dict:
         settings_path = Path(path)
     else:
         project_root = Path(__file__).parent.parent
-        settings_path = project_root / ".autotest" / "settings.json"
+        settings_path = project_root / ".testagent" / "settings.json"
 
     if not settings_path.exists():
         logger.info("Settings file not found at %s, using defaults", settings_path)

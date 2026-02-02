@@ -1,14 +1,17 @@
 /**
  * 工具前端展示配置
  *
- * 数据驱动：优先从 .autotest/settings.json 读取 toolDisplay 配置，
+ * 数据驱动：优先从 .testagent/settings.json 读取 toolDisplay 配置，
  * 读取失败时回退到硬编码默认值。
  *
  * 日志中仍保留原始英文名称，仅 SSE 推送给前端时做转换/过滤。
  */
 
 import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** 硬编码默认显示名 */
 const DEFAULT_DISPLAY_NAMES: Record<string, string> = {
@@ -55,7 +58,7 @@ interface ToolDisplayConfig {
 }
 
 function loadToolDisplayConfig(): ToolDisplayConfig {
-  const settingsPath = resolve(__dirname, '..', '..', '..', '.autotest', 'settings.json');
+  const settingsPath = resolve(__dirname, '..', '..', '..', '.testagent', 'settings.json');
 
   try {
     const raw = readFileSync(settingsPath, 'utf-8');

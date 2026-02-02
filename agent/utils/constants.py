@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """ChatAgent 常量定义"""
 
-NAME_APP = "MCP-AutoTest"
+NAME_APP = "TestAgent"
 NAME_AGENT = "ChatAgent"
 
 # Session 文件 ID

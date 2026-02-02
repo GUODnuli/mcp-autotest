@@ -35,10 +35,26 @@ def _register_tool_groups(toolkit: Toolkit, tool_groups: List[ToolGroupDefinitio
             toolkit.register_tool_function(tool, group_name=group_def.group_name)
 
 
+def _ensure_tool_group(toolkit: Toolkit, group_name: str, display_name: str = "") -> None:
+    """确保工具组存在，不存在则创建"""
+    try:
+        toolkit.create_tool_group(
+            group_name=group_name,
+            description=display_name or group_name,
+        )
+        logger.info("Created tool group '%s' for MCP server", group_name)
+    except Exception:
+        # 组已存在，忽略
+        pass
+
+
 async def _register_mcp_tools(toolkit: Toolkit, mcp_clients: Dict[str, object], mcp_config: dict) -> None:
     """将 MCP client 注册到 toolkit"""
     for name, client in mcp_clients.items():
-        group_name = mcp_config.get(name, {}).get("group", name)
+        server_cfg = mcp_config.get(name, {})
+        group_name = server_cfg.get("group", name)
+        display_name = server_cfg.get("displayName", group_name)
+        _ensure_tool_group(toolkit, group_name, display_name)
         try:
             await toolkit.register_mcp_client(
                 client,
@@ -51,16 +67,16 @@ async def _register_mcp_tools(toolkit: Toolkit, mcp_clients: Dict[str, object], 
 
 
 def _register_skills(toolkit: Toolkit, skills_dir: Path) -> None:
-    """从 .autotest/skills/ 加载并注册技能"""
+    """从 .testagent/skills/ 加载并注册技能"""
     if not skills_dir.exists():
         return
 
-    for skill_path in skills_dir.glob("*.md"):
+    for skill_path in skills_dir.glob("*/SKILL.md"):
         try:
-            toolkit.register_agent_skill(str(skill_path))
-            logger.info("Registered skill from %s", skill_path.name)
+            toolkit.register_agent_skill(str(skill_path.parent))
+            logger.info("Registered skill from %s", skill_path.parent.name)
         except Exception as exc:
-            logger.warning("Failed to register skill '%s': %s", skill_path.name, exc)
+            logger.warning("Failed to register skill '%s': %s", skill_path.parent.name, exc)
 
 
 async def setup_toolkit(
@@ -76,7 +92,7 @@ async def setup_toolkit(
         toolkit: AgentScope 工具集实例
         tool_modules: 工具模块字典
         basic_tools: 基础工具字典（可选）
-        settings_path: .autotest/settings.json 路径（可选）
+        settings_path: .testagent/settings.json 路径（可选）
 
     Returns:
         (toolkit, mcp_clients) 元组，mcp_clients 用于生命周期管理
@@ -99,9 +115,9 @@ async def setup_toolkit(
 
     # 5. 加载技能
     if settings_path:
-        autotest_dir = Path(settings_path).parent
+        config_dir = Path(settings_path).parent
     else:
-        autotest_dir = Path(__file__).parent.parent / ".autotest"
-    _register_skills(toolkit, autotest_dir / "skills")
+        config_dir = Path(__file__).parent.parent / ".testagent"
+    _register_skills(toolkit, config_dir / "skills")
 
     return toolkit, mcp_clients

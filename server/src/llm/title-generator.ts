@@ -7,6 +7,14 @@ const SYSTEM_PROMPT =
   '你是一个标题生成器。根据用户的第一条消息，生成一个10字以内的中文短标题，简洁概括用户意图。只输出标题本身，不要加引号、标点或任何额外内容。';
 
 /**
+ * Strip `<think>...</think>` blocks that Qwen3 models emit when thinking
+ * mode is enabled, leaving only the final answer.
+ */
+function stripThinkingTags(text: string): string {
+  return text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+}
+
+/**
  * Call DashScope OpenAI-compatible API to generate a short creative title
  * for the given user message.
  *
@@ -32,11 +40,13 @@ export async function generateTitle(userMessage: string): Promise<string> {
       body: JSON.stringify({
         model: modelName,
         temperature: 1.2,
-        max_tokens: 50,
+        max_tokens: 256,
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userMessage },
+          { role: 'user', content: userMessage.slice(0, 500) },
         ],
+        // Disable thinking mode for Qwen3 models to get a clean title
+        enable_thinking: false,
       }),
     });
 
@@ -50,9 +60,10 @@ export async function generateTitle(userMessage: string): Promise<string> {
       choices?: Array<{ message?: { content?: string } }>;
     };
 
-    const title = data.choices?.[0]?.message?.content?.trim();
+    const raw = data.choices?.[0]?.message?.content?.trim() ?? '';
+    const title = stripThinkingTags(raw);
     if (!title) {
-      logger.warn('Title generation returned empty content');
+      logger.warn({ raw: raw.slice(0, 200) }, 'Title generation returned empty content after stripping');
       return userMessage.slice(0, 10);
     }
 
