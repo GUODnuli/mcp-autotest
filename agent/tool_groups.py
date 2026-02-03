@@ -2,13 +2,25 @@
 """
 内置工具组定义
 
-从 tool_registry.py 提取的工具组定义类和内置工具组配置。
+DEPRECATED: Domain tools are now loaded dynamically from skills/*/tools/.
+This module is kept for backward compatibility only.
+
+New architecture:
+- Base tools: Registered directly in main.py from tool.base package
+- Domain tools: Loaded dynamically via _load_skill_tools() in tool_registry.py
+- Tool groups: Created automatically per skill with "{skill_name}_tools" naming
+
+This file will be removed in a future version.
 """
 from typing import List, Callable
 
 
 class ToolGroupDefinition:
-    """工具组定义"""
+    """
+    工具组定义
+
+    DEPRECATED: Use skill-based tool loading instead.
+    """
 
     def __init__(
         self,
@@ -24,6 +36,12 @@ class ToolGroupDefinition:
 
 
 def get_builtin_tool_groups(tool_modules: dict) -> List[ToolGroupDefinition]:
+    """
+    DEPRECATED: Domain tools are now loaded from skills/*/tools/ directories.
+
+    This function returns legacy tool groups for backward compatibility.
+    New code should not use this function.
+    """
     """
     获取内置 API 测试工具组定义。
 

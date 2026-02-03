@@ -34,35 +34,22 @@ import json5
 from agentscope.agent import ReActAgent
 from agentscope.memory import InMemoryMemory
 from agentscope.message import Msg
-from agentscope.tool import (
-    Toolkit,
-    execute_python_code
+from agentscope.tool import Toolkit
+
+# Base tools (always available, workspace-scoped)
+from tool.base import (
+    ToolConfig,
+    execute_shell,
+    read_file,
+    write_file,
+    edit_file,
+    glob_files,
+    grep_files,
+    web_fetch,
 )
-from tool.utils import (
-    list_uploaded_files,
-    safe_view_text_file,
-    safe_write_text_file
-)
-from tool.doc_parser import (
-    read_document,
-    extract_api_spec,
-    validate_api_spec
-)
-from tool.case_generator import (
-    generate_positive_cases,
-    generate_negative_cases,
-    generate_security_cases
-)
-from tool.test_executor import (
-    execute_api_test,
-    validate_response,
-    capture_metrics
-)
-from tool.report_tools import (
-    generate_test_report,
-    diagnose_failures,
-    suggest_improvements
-)
+
+# Legacy utilities (kept for backward compatibility during migration)
+from tool.utils import list_uploaded_files
 from tool_registry import setup_toolkit
 from mcp_loader import close_mcp_servers
 from args import get_args
@@ -89,7 +76,26 @@ async def main():
     print(f"会话 ID: {args.conversation_id}")
     print(f"回复 ID: {args.reply_id}")
     print(f"Server URL: {args.studio_url}")
+    print(f"工作区: {args.workspace}")
+    print(f"写权限: {args.writePermission}")
     print("=" * 60)
+
+    # 初始化 ToolConfig（所有 base tools 依赖此配置）
+    ToolConfig.init(workspace=args.workspace, write_permission=args.writePermission)
+
+    # 添加 storage 子目录为允许访问的路径
+    # - storage/chat: 用于读取用户上传的文件 (list_uploaded_files 返回的路径相对于此)
+    # - storage/cache: 用于写入生成的文件
+    storage_chat_dir = project_root / "storage" / "chat"
+    storage_cache_dir = project_root / "storage" / "cache"
+    if storage_chat_dir.exists():
+        ToolConfig.get().add_allowed_path(storage_chat_dir)
+    if storage_cache_dir.exists():
+        ToolConfig.get().add_allowed_path(storage_cache_dir)
+    elif args.writePermission:
+        # 如果 cache 目录不存在但有写权限，创建它
+        storage_cache_dir.mkdir(parents=True, exist_ok=True)
+        ToolConfig.get().add_allowed_path(storage_cache_dir)
 
     # 配置 Hook
     AgentHooks.url = args.studio_url
@@ -110,39 +116,23 @@ async def main():
     # 初始化工具集
     toolkit = Toolkit()
 
-    # 准备基础工具
-    basic_tools = {
-        'safe_write_text_file': safe_write_text_file,
-        'safe_view_text_file': safe_view_text_file
-    }
+    # 注册 base tools（always available, no tool group）
+    base_tools = [
+        execute_shell,
+        read_file,
+        write_file,
+        edit_file,
+        glob_files,
+        grep_files,
+        web_fetch,
+        list_uploaded_files,  # Legacy utility kept for conversation file access
+    ]
+    for tool_func in base_tools:
+        toolkit.register_tool_function(tool_func)
 
-    # 准备 API 测试工具模块
-    tool_modules = {
-        'doc_parser': {
-            'read_document': read_document,
-            'extract_api_spec': extract_api_spec,
-            'validate_api_spec': validate_api_spec
-        },
-        'case_generator': {
-            'generate_positive_cases': generate_positive_cases,
-            'generate_negative_cases': generate_negative_cases,
-            'generate_security_cases': generate_security_cases
-        },
-        'test_executor': {
-            'execute_api_test': execute_api_test,
-            'validate_response': validate_response,
-            'capture_metrics': capture_metrics
-        },
-        'report_tools': {
-            'generate_test_report': generate_test_report,
-            'diagnose_failures': diagnose_failures,
-            'suggest_improvements': suggest_improvements
-        }
-    }
-
-    # 一键配置所有工具和工具组（含 MCP 加载）
+    # 一键配置 MCP 和 skill tools（domain tools loaded from skills/*/tools/）
     settings_path = str(project_root / ".testagent" / "settings.json")
-    toolkit, mcp_clients = await setup_toolkit(toolkit, tool_modules, basic_tools, settings_path)
+    toolkit, mcp_clients = await setup_toolkit(toolkit, settings_path=settings_path)
 
     # 获取模型
     model = get_model(
@@ -158,13 +148,9 @@ async def main():
     system_prompt = _load_system_prompt()
     system_prompt += f"\n\n# 当前时间\n{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
 
-    # 加载自定义plan to hint
-    from plan import (
-        plan_to_hint,
-        api_test_plan_to_hint
-    )
-    plan_to_hint = plan_to_hint.CustomPlanToHint()
-    api_test_plan_to_hint = api_test_plan_to_hint.ApiTestPlanToHint()
+    # 加载自定义 plan to hint
+    from plan.plan_to_hint import CustomPlanToHint
+    plan_to_hint = CustomPlanToHint()
 
     # 创建 ReActAgent
     agent = ReActAgent(

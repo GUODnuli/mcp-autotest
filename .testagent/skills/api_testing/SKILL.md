@@ -8,11 +8,12 @@ description: >
   Use this skill when users ask about API testing, test case generation,
   test execution, or test report analysis.
 version: 1.0.0
+tools_dir: tools
 allowed_tools:
   - read_document
   - extract_api_spec
   - validate_api_spec
-  - generate_positive_cases
+  - generate_positive_cases   
   - generate_negative_cases
   - generate_security_cases
   - execute_api_test

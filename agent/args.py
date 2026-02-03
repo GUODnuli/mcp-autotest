@@ -75,6 +75,13 @@ def get_args() -> Namespace:
         help="是否有写权限"
     )
     parser.add_argument(
+        "--workspace",
+        type=str,
+        required=False,
+        default=".",
+        help="工作区根目录（Agent 文件操作的沙箱根路径）"
+    )
+    parser.add_argument(
         "--clientKwargs",
         type=json_type,
         default={},

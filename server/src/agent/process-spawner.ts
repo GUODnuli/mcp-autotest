@@ -31,6 +31,7 @@ export function spawnAgentProcess(params: SpawnAgentParams): ChildProcess {
     '--modelName', params.modelName,
     '--apiKey', params.apiKey,
     '--writePermission', String(params.writePermission ?? false),
+    '--workspace', params.workspace ?? path.resolve('.'),
   ];
 
   if (params.clientKwargs) {

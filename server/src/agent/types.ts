@@ -8,6 +8,7 @@ export interface SpawnAgentParams {
   modelName: string;
   apiKey: string;
   writePermission?: boolean;
+  workspace?: string;
   clientKwargs?: Record<string, unknown>;
   generateKwargs?: Record<string, unknown>;
 }

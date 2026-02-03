@@ -3,12 +3,16 @@
 工具注册编排模块
 
 异步编排器，将内置工具注册、工具组注册、MCP 加载、技能加载统一协调。
+支持从 skills/*/tools/ 目录动态加载域工具。
 """
+import importlib.util
 import logging
+import re
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Callable, Dict, List, Tuple, Any, get_type_hints
 
-from agentscope.tool import Toolkit
+import yaml
+from agentscope.tool import Toolkit, ToolResponse
 
 from tool_groups import ToolGroupDefinition, get_builtin_tool_groups
 from settings_loader import load_settings
@@ -66,54 +70,204 @@ async def _register_mcp_tools(toolkit: Toolkit, mcp_clients: Dict[str, object], 
             logger.warning("Failed to register MCP client '%s': %s", name, exc)
 
 
+def _load_skill_tools(skill_dir: Path, expected_skills_parent: Path | None = None) -> List[Callable]:
+    """
+    Dynamically load tool functions from a skill's tools/ directory.
+
+    Discovers Python modules in the tools/ subdirectory and extracts
+    functions that return ToolResponse (identified by type hints).
+
+    Security: Only loads skills from within the expected .testagent/skills/ directory.
+
+    Args:
+        skill_dir: Path to the skill directory containing SKILL.md
+        expected_skills_parent: Expected parent directory for skills validation
+
+    Returns:
+        List of callable tool functions
+    """
+    # Security: Validate skill_dir is within expected boundaries
+    if expected_skills_parent is not None:
+        try:
+            skill_dir.resolve().relative_to(expected_skills_parent.resolve())
+        except ValueError:
+            logger.warning("Security: Skill directory outside expected path: %s", skill_dir)
+            return []
+
+    tools_dir = skill_dir / "tools"
+    if not tools_dir.exists():
+        return []
+
+    discovered = []
+
+    for py_file in tools_dir.glob("*.py"):
+        if py_file.name.startswith("_"):
+            continue
+
+        try:
+            # Create a unique module name to avoid conflicts
+            module_name = f"skill_tools_{skill_dir.name}_{py_file.stem}"
+
+            spec = importlib.util.spec_from_file_location(module_name, py_file)
+            if spec is None or spec.loader is None:
+                continue
+
+            module = importlib.util.module_from_spec(spec)
+            # Register module in sys.modules before execution
+            import sys
+            sys.modules[module_name] = module
+            try:
+                spec.loader.exec_module(module)
+            except Exception:
+                del sys.modules[module_name]  # Cleanup on failure
+                raise
+
+            # Discover tool functions by checking return type annotation
+            for name in dir(module):
+                if name.startswith("_"):
+                    continue
+
+                obj = getattr(module, name)
+                if not callable(obj):
+                    continue
+
+                # Check if function returns ToolResponse
+                try:
+                    hints = get_type_hints(obj)
+                    return_type = hints.get("return")
+                    if return_type is ToolResponse:
+                        discovered.append(obj)
+                        logger.debug("Discovered tool function: %s.%s", py_file.stem, name)
+                except Exception:
+                    # If we can't get type hints, skip this function
+                    continue
+
+        except Exception as exc:
+            logger.warning("Failed to load tools from %s: %s", py_file, exc)
+
+    return discovered
+
+
+def _parse_skill_metadata(skill_path: Path) -> Dict[str, Any]:
+    """
+    Parse SKILL.md frontmatter for skill metadata.
+
+    Args:
+        skill_path: Path to SKILL.md file
+
+    Returns:
+        Dictionary of skill metadata (name, description, tools_dir, etc.)
+    """
+    try:
+        content = skill_path.read_text(encoding="utf-8")
+
+        # Extract YAML frontmatter between --- markers
+        match = re.match(r'^---\s*\n(.*?)\n---', content, re.DOTALL)
+        if not match:
+            return {}
+
+        frontmatter = match.group(1)
+        return yaml.safe_load(frontmatter) or {}
+
+    except Exception as exc:
+        logger.warning("Failed to parse skill metadata from %s: %s", skill_path, exc)
+        return {}
+
+
 def _register_skills(toolkit: Toolkit, skills_dir: Path) -> None:
-    """从 .testagent/skills/ 加载并注册技能"""
+    """
+    从 .testagent/skills/ 加载并注册技能及其工具。
+
+    For each skill:
+    1. Register the skill metadata (SKILL.md) via register_agent_skill
+    2. If tools_dir is specified, dynamically load tools and register as a tool group
+    """
     if not skills_dir.exists():
         return
 
     for skill_path in skills_dir.glob("*/SKILL.md"):
+        skill_dir = skill_path.parent
+        skill_name = skill_dir.name
+
         try:
-            toolkit.register_agent_skill(str(skill_path.parent))
-            logger.info("Registered skill from %s", skill_path.parent.name)
+            # Register skill metadata
+            toolkit.register_agent_skill(str(skill_dir))
+            logger.info("Registered skill from %s", skill_name)
+
+            # Parse skill metadata for tools_dir
+            metadata = _parse_skill_metadata(skill_path)
+            tools_dir_name = metadata.get("tools_dir")
+
+            if tools_dir_name:
+                # Dynamically load tools from the skill's tools directory
+                # Security: Pass expected_skills_parent for path validation
+                tools = _load_skill_tools(skill_dir, expected_skills_parent=skills_dir)
+
+                if tools:
+                    # Create tool group for this skill
+                    group_name = f"{skill_name.replace('-', '_')}_tools"
+                    description = metadata.get("description", f"Tools for {skill_name} skill")
+
+                    # Ensure group exists
+                    _ensure_tool_group(toolkit, group_name, description)
+
+                    # Register each tool function (skip duplicates)
+                    for tool_func in tools:
+                        try:
+                            toolkit.register_tool_function(tool_func, group_name=group_name)
+                            logger.debug("Registered skill tool: %s -> %s", tool_func.__name__, group_name)
+                        except Exception as exc:
+                            # Check if it's a duplicate registration error
+                            if "already registered" in str(exc).lower():
+                                logger.info("Skipped duplicate tool '%s' (already registered)", tool_func.__name__)
+                            else:
+                                logger.warning("Failed to register tool %s: %s", tool_func.__name__, exc)
+
+                    logger.info("Loaded %d tools from skill '%s'", len(tools), skill_name)
+
         except Exception as exc:
-            logger.warning("Failed to register skill '%s': %s", skill_path.parent.name, exc)
+            logger.warning("Failed to register skill '%s': %s", skill_name, exc)
 
 
 async def setup_toolkit(
     toolkit: Toolkit,
-    tool_modules: dict,
+    tool_modules: dict | None = None,
     basic_tools: dict | None = None,
     settings_path: str | None = None,
 ) -> Tuple[Toolkit, Dict[str, object]]:
     """
-    一键配置工具集（基础工具 + 工具组 + MCP + 技能）。
+    一键配置工具集（MCP + 技能 + 动态加载的域工具）。
+
+    Base tools should be registered directly before calling this function.
+    Domain tools are now loaded dynamically from skills/*/tools/.
 
     Args:
         toolkit: AgentScope 工具集实例
-        tool_modules: 工具模块字典
-        basic_tools: 基础工具字典（可选）
+        tool_modules: [DEPRECATED] 工具模块字典，不再使用
+        basic_tools: [DEPRECATED] 基础工具字典，不再使用
         settings_path: .testagent/settings.json 路径（可选）
 
     Returns:
         (toolkit, mcp_clients) 元组，mcp_clients 用于生命周期管理
     """
-    # 1. 注册基础工具
+    # Legacy: 注册基础工具（deprecated, base tools should be registered in main.py）
     if basic_tools:
         _register_basic_tools(toolkit, basic_tools)
 
-    # 2. 注册内置工具组
-    builtin_groups = get_builtin_tool_groups(tool_modules)
-    _register_tool_groups(toolkit, builtin_groups)
+    # Legacy: 注册内置工具组（deprecated, domain tools now loaded from skills）
+    if tool_modules:
+        builtin_groups = get_builtin_tool_groups(tool_modules)
+        _register_tool_groups(toolkit, builtin_groups)
 
-    # 3. 加载配置
+    # 加载配置
     settings = load_settings(settings_path)
 
-    # 4. 加载并注册 MCP Server
+    # 加载并注册 MCP Server
     mcp_config = settings.get("mcpServers", {})
     mcp_clients = await load_mcp_servers(mcp_config)
     await _register_mcp_tools(toolkit, mcp_clients, mcp_config)
 
-    # 5. 加载技能
+    # 加载技能（包括动态加载域工具）
     if settings_path:
         config_dir = Path(settings_path).parent
     else:

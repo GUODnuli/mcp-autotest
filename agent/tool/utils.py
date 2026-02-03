@@ -1,3 +1,20 @@
+"""
+Legacy utility tools for file operations.
+
+DEPRECATED: These tools are being replaced by base tools in tool.base package:
+- safe_view_text_file -> tool.base.file_read.read_file
+- safe_write_text_file -> tool.base.file_write.write_file
+- list_uploaded_files -> kept for backward compatibility (conversation-specific)
+
+New code should use the base tools which provide:
+- Workspace-scoped security via ToolConfig
+- Consistent error handling
+- Cross-platform support
+
+These legacy tools are kept for backward compatibility during migration.
+They will be removed in a future version.
+"""
+
 from pathlib import Path
 import json
 from agentscope.tool import ToolResponse

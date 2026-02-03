@@ -1,22 +1,31 @@
 # -*- coding: utf-8 -*-
 """
-自定义计划提示词生成器。
-将 AgentScope 的默认提示词翻译为中文，并针对 MCP 自动化测试场景进行优化。
+通用计划提示词生成器。
+
+根据 PlanNotebook 的当前状态生成引导提示，驱动 Agent 按计划执行。
+领域特定的工作流和工具指导由 SKILL.md 提供，本模块不承载领域知识。
 """
 from agentscope.plan import Plan
 
+
 class CustomPlanToHint:
-    """
-    自定义函数，根据当前计划生成提示信息，引导智能体执行下一步。
-    """
+    """通用 plan_to_hint，根据计划状态引导 Agent 下一步行动。"""
 
     hint_prefix: str = "<system-hint>"
     hint_suffix: str = "</system-hint>"
 
     no_plan: str = (
-        "If the user's request is complex (e.g., building a website, game, or application, or executing a series of intricate automated test steps), "
-        "or if it requires multiple steps to complete (e.g., researching a topic from multiple sources, or performing an end-to-end API testing workflow), "
-        "you must first create a plan by calling 'create_plan'. Otherwise, you can directly execute the user's query without planning."
+        "If the user's request is complex (e.g., building a website, game, "
+        "or application) or requires multiple steps to complete (e.g., "
+        "researching a topic from different sources, performing end-to-end "
+        "testing), you MUST first create a plan by calling 'create_plan'.\n\n"
+        "Before creating a plan, read the relevant SKILL.md file to "
+        "understand the recommended workflow, available tools, and best "
+        "practices for the domain. Use the workflow described in SKILL.md "
+        "to structure your subtasks, and write detailed descriptions for "
+        "each subtask including the specific tools and steps to use.\n\n"
+        "If the task is simple enough, you can directly execute the user's "
+        "query without planning."
     )
 
     at_the_beginning: str = (
