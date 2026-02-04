@@ -1,9 +1,9 @@
-/**
+﻿/**
  * 工具前端展示配置
  *
  * 数据驱动：
  * 1. 从 .testagent/settings.json 读取全局 toolDisplay 配置
- * 2. 从 .testagent/skills/*\/settings.json 读取各技能的 toolDisplay 配置
+ * 2. 从 .testagent/skills/*/settings.json 读取各技能的 toolDisplay 配置
  * 3. 合并所有配置，技能配置覆盖全局配置
  *
  * 日志中仍保留原始英文名称，仅 SSE 推送给前端时做转换/过滤。
@@ -76,7 +76,7 @@ interface ToolDisplayConfig {
 }
 
 /**
- * Load skill-level settings from .testagent/skills/*\/settings.json
+ * Load skill-level settings from .testagent/skills/*/settings.json
  */
 function loadSkillSettings(skillsDir: string): Record<string, SkillToolDisplay> {
   const skillSettings: Record<string, SkillToolDisplay> = {};

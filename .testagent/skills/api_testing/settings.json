@@ -1,0 +1,36 @@
+{
+  "toolDisplay": {
+    "names": {
+      "extract_api_spec": "提取接口规范",
+      "validate_api_spec": "校验接口规范",
+      "generate_positive_cases": "生成正向用例",
+      "generate_negative_cases": "生成异常用例",
+      "generate_security_cases": "生成安全用例",
+      "apply_business_rules": "应用业务规则",
+      "execute_api_test": "执行接口测试",
+      "validate_response": "校验响应结果",
+      "capture_metrics": "采集性能指标",
+      "generate_test_report": "生成测试报告",
+      "diagnose_failures": "诊断失败原因",
+      "suggest_improvements": "提供改进建议"
+    },
+    "categories": {
+      "spec": {
+        "displayName": "规范解析",
+        "tools": ["extract_api_spec", "validate_api_spec"]
+      },
+      "generation": {
+        "displayName": "用例生成",
+        "tools": ["generate_positive_cases", "generate_negative_cases", "generate_security_cases", "apply_business_rules"]
+      },
+      "execution": {
+        "displayName": "测试执行",
+        "tools": ["execute_api_test", "validate_response", "capture_metrics"]
+      },
+      "reporting": {
+        "displayName": "报告诊断",
+        "tools": ["generate_test_report", "diagnose_failures", "suggest_improvements"]
+      }
+    }
+  }
+}

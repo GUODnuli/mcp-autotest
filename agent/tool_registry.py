@@ -6,6 +6,7 @@
 支持从 skills/*/tools/ 目录动态加载域工具。
 """
 import importlib.util
+import json
 import logging
 import re
 from pathlib import Path
@@ -19,6 +20,93 @@ from settings_loader import load_settings
 from mcp_loader import load_mcp_servers, close_mcp_servers
 
 logger = logging.getLogger(__name__)
+
+# Module-level storage for tool display settings (accessible by frontend)
+_tool_display_settings: Dict[str, Any] = {
+    "names": {},
+    "categories": {},
+    "skills": {}  # Per-skill settings keyed by skill name
+}
+
+
+def get_tool_display_settings() -> Dict[str, Any]:
+    """
+    Get merged tool display settings for frontend.
+
+    Returns a dictionary containing:
+    - names: Tool name to display name mapping (merged from all sources)
+    - categories: Tool categories from global settings
+    - skills: Per-skill display settings keyed by skill name
+
+    Example:
+        {
+            "names": {
+                "execute_shell": "执行命令",
+                "extract_api_spec": "提取接口规范",
+                ...
+            },
+            "categories": {
+                "base": {"displayName": "基础工具", "tools": [...]},
+                ...
+            },
+            "skills": {
+                "api_testing": {
+                    "names": {...},
+                    "categories": {...}
+                }
+            }
+        }
+    """
+    return _tool_display_settings.copy()
+
+
+def _load_skill_settings(skill_dir: Path) -> Dict[str, Any]:
+    """
+    Load skill-level settings from settings.json.
+
+    Args:
+        skill_dir: Path to the skill directory
+
+    Returns:
+        Dictionary of skill settings or empty dict if not found
+    """
+    settings_path = skill_dir / "settings.json"
+    if not settings_path.exists():
+        return {}
+
+    try:
+        with open(settings_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as exc:
+        logger.warning("Failed to load skill settings from %s: %s", settings_path, exc)
+        return {}
+
+
+def _merge_tool_display_settings(global_settings: Dict[str, Any], skill_name: str, skill_settings: Dict[str, Any]) -> None:
+    """
+    Merge skill-level tool display settings into global storage.
+
+    Args:
+        global_settings: Global settings from .testagent/settings.json
+        skill_name: Name of the skill
+        skill_settings: Skill-level settings from skill/settings.json
+    """
+    global _tool_display_settings
+
+    # Initialize from global settings if not done
+    global_tool_display = global_settings.get("toolDisplay", {})
+    if not _tool_display_settings["names"]:
+        _tool_display_settings["names"] = global_tool_display.get("names", {}).copy()
+        _tool_display_settings["categories"] = global_tool_display.get("categories", {}).copy()
+
+    # Store skill-specific settings
+    skill_tool_display = skill_settings.get("toolDisplay", {})
+    if skill_tool_display:
+        _tool_display_settings["skills"][skill_name] = skill_tool_display
+
+        # Merge skill tool names into global names for easy lookup
+        skill_names = skill_tool_display.get("names", {})
+        _tool_display_settings["names"].update(skill_names)
 
 
 def _register_basic_tools(toolkit: Toolkit, basic_tools: dict) -> None:
@@ -174,13 +262,19 @@ def _parse_skill_metadata(skill_path: Path) -> Dict[str, Any]:
         return {}
 
 
-def _register_skills(toolkit: Toolkit, skills_dir: Path) -> None:
+def _register_skills(toolkit: Toolkit, skills_dir: Path, global_settings: Dict[str, Any]) -> None:
     """
     从 .testagent/skills/ 加载并注册技能及其工具。
 
     For each skill:
     1. Register the skill metadata (SKILL.md) via register_agent_skill
     2. If tools_dir is specified, dynamically load tools and register as a tool group
+    3. Load skill-level settings.json and merge into global tool display settings
+
+    Args:
+        toolkit: AgentScope Toolkit instance
+        skills_dir: Path to .testagent/skills/ directory
+        global_settings: Global settings from .testagent/settings.json
     """
     if not skills_dir.exists():
         return
@@ -197,6 +291,12 @@ def _register_skills(toolkit: Toolkit, skills_dir: Path) -> None:
             # Parse skill metadata for tools_dir
             metadata = _parse_skill_metadata(skill_path)
             tools_dir_name = metadata.get("tools_dir")
+
+            # Load and merge skill-level settings
+            skill_settings = _load_skill_settings(skill_dir)
+            if skill_settings:
+                _merge_tool_display_settings(global_settings, skill_name, skill_settings)
+                logger.debug("Loaded settings for skill '%s'", skill_name)
 
             if tools_dir_name:
                 # Dynamically load tools from the skill's tools directory
@@ -249,7 +349,13 @@ async def setup_toolkit(
 
     Returns:
         (toolkit, mcp_clients) 元组，mcp_clients 用于生命周期管理
+
+    Side effects:
+        Updates module-level _tool_display_settings which can be retrieved via
+        get_tool_display_settings() for frontend tool name display.
     """
+    global _tool_display_settings
+
     # Legacy: 注册基础工具（deprecated, base tools should be registered in main.py）
     if basic_tools:
         _register_basic_tools(toolkit, basic_tools)
@@ -262,16 +368,26 @@ async def setup_toolkit(
     # 加载配置
     settings = load_settings(settings_path)
 
+    # Initialize global tool display settings from config
+    global_tool_display = settings.get("toolDisplay", {})
+    _tool_display_settings["names"] = global_tool_display.get("names", {}).copy()
+    _tool_display_settings["categories"] = global_tool_display.get("categories", {}).copy()
+    _tool_display_settings["skills"] = {}
+
     # 加载并注册 MCP Server
     mcp_config = settings.get("mcpServers", {})
     mcp_clients = await load_mcp_servers(mcp_config)
     await _register_mcp_tools(toolkit, mcp_clients, mcp_config)
 
-    # 加载技能（包括动态加载域工具）
+    # 加载技能（包括动态加载域工具和技能级别设置）
     if settings_path:
         config_dir = Path(settings_path).parent
     else:
         config_dir = Path(__file__).parent.parent / ".testagent"
-    _register_skills(toolkit, config_dir / "skills")
+    _register_skills(toolkit, config_dir / "skills", settings)
+
+    logger.info("Tool display settings loaded: %d tool names, %d skills",
+                len(_tool_display_settings["names"]),
+                len(_tool_display_settings["skills"]))
 
     return toolkit, mcp_clients

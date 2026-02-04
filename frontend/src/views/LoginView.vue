@@ -2,7 +2,7 @@
   <div class="login-page">
     <div class="login-container">
       <div class="login-header">
-        <h1 class="login-title">MCP 接口测试智能体</h1>
+        <h1 class="login-title">TestAgent</h1>
         <p class="login-subtitle">登录您的账户</p>
       </div>
 
