@@ -583,25 +583,40 @@ class Coordinator:
         # 清空本 Phase 的消息收集
         self._phase_messages.clear()
 
-        # GAM: 使用 GAMResearcher 进行深度研究（在线阶段）
+        # GAM: 检索历史上下文（在线阶段）
         memory_context = {}
         if self._memory_manager is not None and self.config.gam_enabled:
             try:
-                pre_memory = await self._memory_manager.gam_deep_research(
-                    query=self._state.objective,
+                # Phase 1 没有历史记忆，跳过检索
+                existing_memos = self._memory_manager.get_all_memos(
                     plan_id=self._state.task_id
                 )
-                if pre_memory.has_relevant_context():
-                    memory_context = pre_memory.get_context_for_worker()
-                    logger.info(
-                        "GAM Researcher: Retrieved context for phase %d, "
-                        "confidence=%.2f, memos=%d, pages=%d",
-                        phase.phase, pre_memory.confidence_score,
-                        len(pre_memory.retrieved_memos),
-                        len(pre_memory.retrieved_pages)
+                if existing_memos:
+                    # 同 Plan 内使用快速搜索（无需调用 LLM，直接查内存）
+                    pre_memory = self._memory_manager.gam_quick_search(
+                        query=self._state.objective,
+                        plan_id=self._state.task_id,
+                        top_k=20
                     )
+                    if pre_memory.has_relevant_context():
+                        memory_context = pre_memory.get_context_for_worker()
+                        logger.info(
+                            "GAM Quick Search: Retrieved context for phase %d, "
+                            "memos=%d, pages=%d, processed_files=%d",
+                            phase.phase,
+                            len(pre_memory.retrieved_memos),
+                            len(pre_memory.retrieved_pages),
+                            len(memory_context.get("processed_files", []))
+                        )
+                    else:
+                        logger.debug(
+                            "GAM Quick Search: No relevant context for phase %d",
+                            phase.phase
+                        )
+                else:
+                    logger.debug("GAM: No memos yet for plan %s, skipping search", self._state.task_id)
             except Exception as e:
-                logger.warning("GAM Researcher failed: %s", e)
+                logger.warning("GAM search failed: %s", e)
 
         # 准备 Worker 任务
         tasks = []
@@ -648,12 +663,19 @@ class Coordinator:
         # GAM: 使用 GAMMemorizer 处理 Worker 会话（离线阶段）
         if self.config.gam_enabled and self._memory_manager is not None and self._memory_manager.model is not None:
             try:
+                # 排空消息队列，确保所有 Worker 消息都已被 consumer 处理
+                await self._drain_message_queue()
+
                 for worker_name, worker_result in worker_results.items():
                     if worker_result.is_success():
                         session_id = f"{self._state.task_id}_p{phase.phase}_{worker_name}"
 
                         # 收集该 Worker 的消息历史
                         messages = self._phase_messages.get(worker_name, [])
+                        logger.debug(
+                            "GAM Memorizer: Worker %s has %d collected messages",
+                            worker_name, len(messages)
+                        )
                         if messages:
                             memo, pages = await self._memory_manager.gam_process_session(
                                 session_id=session_id,
@@ -1034,6 +1056,34 @@ class Coordinator:
                 self.progress_callback(event_type, data)
             except Exception as exc:
                 logger.warning("Progress callback failed: %s", exc)
+
+    async def _drain_message_queue(self, timeout: float = 2.0) -> None:
+        """
+        排空消息队列，确保所有待处理消息都已被 consumer 消费
+
+        在 Worker 执行完成后、GAMMemorizer 处理前调用，
+        解决 consumer 异步处理与主流程之间的竞态条件。
+
+        Args:
+            timeout: 最大等待时间（秒）
+        """
+        if self._message_queue is None:
+            return
+
+        deadline = asyncio.get_event_loop().time() + timeout
+        while not self._message_queue.empty():
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                logger.warning(
+                    "Drain timeout: %d messages still in queue",
+                    self._message_queue.qsize()
+                )
+                break
+            # 让出控制权给 consumer task 处理消息
+            await asyncio.sleep(0.05)
+
+        # 额外让出一次，确保 consumer 完成最后一批处理
+        await asyncio.sleep(0.1)
 
     def _collect_message_for_gam(
         self,

@@ -519,6 +519,8 @@ class WorkerRunner:
         """
         构建任务提示词
 
+        GAM 记忆上下文放在最前面，确保 Worker 优先参考历史结果。
+
         Args:
             task: 任务
             config: 配置
@@ -528,52 +530,54 @@ class WorkerRunner:
         """
         parts = []
 
-        # 任务描述
+        # ===== GAM 记忆上下文（最高优先级，放在最前面）=====
+        memory_context = task.context.get("memory_context", {})
+        has_memory = False
+
+        # GAM 上下文摘要（由 LLM 整合的历史记忆）
+        gam_context = memory_context.get("gam_context", "")
+        if gam_context:
+            has_memory = True
+            memory_parts = [
+                "## ⚠️ CRITICAL: Previous Work Context",
+                "",
+                "**你必须先阅读以下历史上下文，再决定如何执行任务。**",
+                "**已完成的工作不需要重复执行，已读取的文件不需要重新读取。**",
+                "",
+                gam_context,
+            ]
+            parts.append("\n".join(memory_parts))
+
+        # 已处理的文件列表（避免重复读取）
+        processed_files = memory_context.get("processed_files", [])
+        if processed_files:
+            has_memory = True
+            files_section = [
+                "## Already Processed Files (DO NOT re-read)",
+                "",
+                "以下文件已在之前的阶段中读取/分析过，直接使用上面的上下文信息即可：",
+                "",
+            ]
+            for f in processed_files[:30]:
+                files_section.append(f"- `{f}`")
+            parts.append("\n".join(files_section))
+
+        # 关键实体（供参考）
+        key_entities = memory_context.get("key_entities", [])
+        if key_entities and not processed_files:
+            has_memory = True
+            parts.append(f"## Key Entities (from previous work)\n\n{', '.join(f'`{e}`' for e in key_entities[:20])}")
+
+        if has_memory:
+            parts.append("---")  # 分隔线
+
+        # ===== 任务描述 =====
         if task.task_description:
             parts.append(f"## Task\n{task.task_description}")
 
         # 输入数据
         if task.input_data:
             parts.append(f"## Input\n```json\n{json.dumps(task.input_data, ensure_ascii=False, indent=2)}\n```")
-
-        # 从 GAM 记忆上下文中提取历史信息
-        memory_context = task.context.get("memory_context", {})
-
-        # GAM 上下文摘要（由 LLM 整合的历史记忆）
-        gam_context = memory_context.get("gam_context", "")
-        if gam_context:
-            memory_parts = ["## Historical Context (from GAM Memory)"]
-            memory_parts.append("")
-            memory_parts.append("**IMPORTANT: The following context summarizes relevant work from previous phases.**")
-            memory_parts.append("**Use this information to avoid repeating work that has already been done.**")
-            memory_parts.append("")
-            memory_parts.append(gam_context)
-            parts.append("\n".join(memory_parts))
-
-        # 已处理的文件列表（避免重复读取）
-        processed_files = memory_context.get("processed_files", [])
-        if processed_files:
-            files_section = ["## Already Processed Files"]
-            files_section.append("")
-            files_section.append("**The following files have already been read/analyzed in previous phases.**")
-            files_section.append("**DO NOT re-read these files unless you need updated information.**")
-            files_section.append("")
-            for f in processed_files[:30]:  # 限制显示数量
-                files_section.append(f"- `{f}`")
-            parts.append("\n".join(files_section))
-
-        # 关键实体（供参考）
-        key_entities = memory_context.get("key_entities", [])
-        if key_entities and not processed_files:  # 如果没有 processed_files 才显示 key_entities
-            entities_section = ["## Key Entities (from previous work)"]
-            entities_section.append("")
-            entities_section.append(", ".join(f"`{e}`" for e in key_entities[:20]))
-            parts.append("\n".join(entities_section))
-
-        # 置信度信息（可选，用于调试）
-        confidence = memory_context.get("confidence", 0)
-        if confidence > 0:
-            parts.append(f"_Memory context confidence: {confidence:.0%}_")
 
         # 过滤掉 memory_context 后的上下文信息
         filtered_context = {k: v for k, v in task.context.items() if k != "memory_context"}

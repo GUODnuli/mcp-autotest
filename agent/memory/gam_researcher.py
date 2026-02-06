@@ -89,7 +89,11 @@ class GAMResearcher:
             self.retrievers["bm25_search"] = BM25Retriever(self.config)
             self.retrievers["page_id_search"] = PageIDRetriever(self.page_store, self.config)
         except ImportError as e:
-            logger.warning(f"GAMResearcher: Failed to initialize retrievers: {e}")
+            logger.info(
+                "GAMResearcher: retrieval module not available (%s), "
+                "will use page_store.search_pages() as fallback",
+                e
+            )
 
     async def deep_research(
         self,
