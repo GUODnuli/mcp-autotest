@@ -51,7 +51,7 @@ export async function sendMessage(
   // Build query JSON
   const query = JSON.stringify([{ type: 'text', text: message }]);
 
-  // Spawn agent
+  // Spawn agent with write permission
   await agentManager.spawnAgent({
     conversationId,
     replyId,
@@ -61,6 +61,8 @@ export async function sendMessage(
     llmProvider: config.llm.provider,
     modelName: config.llm.modelName,
     apiKey: config.llm.apiKey,
+    writePermission: true,
+    workspace: config.storage.root,
   });
 
   return {
@@ -127,16 +129,34 @@ export async function* sendMessageStreaming(
   // Build query JSON with context
   const queryBlocks: Array<{ type: string; text: string }> = [];
 
+  // File storage path for this conversation
+  const fileStoragePath = `chat/${userId}/${conversationId}`;
+
   if (uploadedFiles && uploadedFiles.length > 0) {
-    const filesInfo = uploadedFiles.join(', ');
+    const filesWithPaths = uploadedFiles.map(f => `${fileStoragePath}/${f}`);
     queryBlocks.push({
       type: 'text',
-      text: `[SYSTEM CONTEXT]\nuser_id: ${userId}\nconversation_id: ${conversationId}\nuploaded_files: ${filesInfo}\n[/SYSTEM CONTEXT]`,
+      text: `[SYSTEM CONTEXT]
+user_id: ${userId}
+conversation_id: ${conversationId}
+file_storage_path: ${fileStoragePath}
+uploaded_files:
+${filesWithPaths.map(f => `  - ${f}`).join('\n')}
+
+IMPORTANT: To read uploaded files, use:
+  - read_file("${fileStoragePath}/filename")
+  - glob_files("*", "${fileStoragePath}")
+[/SYSTEM CONTEXT]`,
     });
   } else {
     queryBlocks.push({
       type: 'text',
-      text: `[SYSTEM CONTEXT]\nuser_id: ${userId}\nconversation_id: ${conversationId}\nuploaded_files: (none)\n[/SYSTEM CONTEXT]`,
+      text: `[SYSTEM CONTEXT]
+user_id: ${userId}
+conversation_id: ${conversationId}
+file_storage_path: ${fileStoragePath}
+uploaded_files: (none)
+[/SYSTEM CONTEXT]`,
     });
   }
   queryBlocks.push({ type: 'text', text: message });
@@ -144,7 +164,7 @@ export async function* sendMessageStreaming(
   const query = JSON.stringify(queryBlocks);
   const studioUrl = `http://localhost:${config.port}`;
 
-  // Spawn agent
+  // Spawn agent with write permission and workspace
   await agentManager.spawnAgent({
     conversationId,
     replyId,
@@ -154,6 +174,8 @@ export async function* sendMessageStreaming(
     llmProvider: config.llm.provider,
     modelName: config.llm.modelName,
     apiKey: config.llm.apiKey,
+    writePermission: true,
+    workspace: config.storage.root,
   });
 
   // Consume messages from agent manager via callback

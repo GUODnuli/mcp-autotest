@@ -123,8 +123,36 @@ def _create_progress_callback(studio_url: str, reply_id: str):
                 "sequence": sequence_counter["value"],
             })
 
-        elif event_type in ("phase_started", "phase_completed"):
-            # Phase 状态变化作为 coordinator_event（用于更新侧边栏）
+        elif event_type == "phase_started":
+            # Phase 开始 - 发送大标题到对话流
+            phase_num = data.get("phase", 1)
+            phase_name = data.get("name", f"Phase {phase_num}")
+            workers = data.get("workers", [])
+            workers_str = ", ".join(workers) if workers else ""
+
+            # 生成 Markdown 格式的阶段标题
+            title_text = f"\n\n---\n\n## 📋 阶段 {phase_num}: {phase_name}\n"
+            if workers_str:
+                title_text += f"*Workers: {workers_str}*\n"
+            title_text += "\n"
+
+            events.append({
+                "type": "text",
+                "content": title_text,
+                "sequence": sequence_counter["value"],
+            })
+
+            # 同时发送 coordinator_event（用于更新侧边栏）
+            sequence_counter["value"] += 1
+            events.append({
+                "type": "coordinator_event",
+                "event_type": event_type,
+                "data": data,
+                "sequence": sequence_counter["value"],
+            })
+
+        elif event_type == "phase_completed":
+            # Phase 完成 - 作为 coordinator_event（用于更新侧边栏）
             events.append({
                 "type": "coordinator_event",
                 "event_type": event_type,

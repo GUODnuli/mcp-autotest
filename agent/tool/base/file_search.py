@@ -59,31 +59,43 @@ def glob_files(
     Uses glob pattern matching to discover files. Results are sorted
     by modification time (most recent first).
 
+    IMPORTANT: This tool searches within the workspace directory (storage root).
+    - User uploaded files are stored in: chat/{user_id}/{conversation_id}/
+    - To search uploaded files, use path="chat/{user_id}/{conversation_id}"
+    - The user_id and conversation_id are provided in SYSTEM CONTEXT
+
     Args:
-        pattern: Glob pattern to match (e.g., "**/*.py", "src/**/*.ts")
-        path: Subdirectory to search in (relative to workspace, default: workspace root)
+        pattern: Glob pattern to match (e.g., "**/*.py", "*.yaml")
+        path: Subdirectory to search in (relative to workspace).
+              MUST specify this to limit search scope!
+              Examples:
+                - "chat/{user_id}/{conversation_id}" for uploaded files
+                - "cache" for cached data
+              Default: workspace root (NOT recommended, may include node_modules)
         limit: Maximum number of results (default 100, max 500)
 
     Returns:
         ToolResponse containing matching file paths (relative to workspace):
         ```
-        src/main.py
-        src/utils/helper.py
-        tests/test_main.py
+        chat/user123/conv456/api_spec.yaml
+        chat/user123/conv456/requirements.txt
         ```
 
         Or JSON error on failure.
 
     Example:
-        glob_files("**/*.py")           # All Python files
-        glob_files("*.json", "config")  # JSON files in config/
-        glob_files("src/**/*.tsx")      # TSX files under src/
+        # Search uploaded files (RECOMMENDED)
+        glob_files("*.yaml", "chat/user123/conv456")
+        glob_files("**/*.json", "chat/user123/conv456")
+
+        # Search specific directory
+        glob_files("*.py", "src")
 
     Notes:
         - Pattern uses standard glob syntax (*, **, ?)
         - ** matches any number of directories
         - Results are relative paths from workspace root
-        - Hidden files (starting with .) are included
+        - ALWAYS specify path parameter to avoid searching node_modules
     """
     try:
         config = ToolConfig.get()

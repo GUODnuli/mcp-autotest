@@ -81,19 +81,30 @@ class GAMResearcher:
         self._total_iterations = 0
 
     def _init_default_retrievers(self) -> None:
-        """初始化默认检索器"""
+        """初始化默认检索器（独立初始化，一个失败不影响其他）"""
+        # BM25 (有纯 Python fallback)
         try:
-            from .retrieval import BM25Retriever, PageIDRetriever, VectorSearchRetriever
-
-            self.retrievers["vector_search"] = VectorSearchRetriever(self.config)
+            from .retrieval import BM25Retriever
             self.retrievers["bm25_search"] = BM25Retriever(self.config)
+        except ImportError as e:
+            logger.warning(f"BM25Retriever not available: {e}")
+
+        # Vector Search (依赖 sentence_transformers)
+        try:
+            from .retrieval import VectorSearchRetriever
+            self.retrievers["vector_search"] = VectorSearchRetriever(self.config)
+        except ImportError as e:
+            logger.info(f"VectorSearchRetriever not available: {e}")
+
+        # Page ID Search
+        try:
+            from .retrieval import PageIDRetriever
             self.retrievers["page_id_search"] = PageIDRetriever(self.page_store, self.config)
         except ImportError as e:
-            logger.info(
-                "GAMResearcher: retrieval module not available (%s), "
-                "will use page_store.search_pages() as fallback",
-                e
-            )
+            logger.warning(f"PageIDRetriever not available: {e}")
+
+        if not self.retrievers:
+            logger.info("No retrievers available, will use page_store fallback")
 
     async def deep_research(
         self,
@@ -321,6 +332,35 @@ class GAMResearcher:
 
         # 2. 搜索 Pages
         all_page_scores: Dict[str, float] = {}
+
+        # 检查 retrievers 可用性
+        has_retrievers = bool(self.retrievers)
+        use_vector = strategy.get("use_vector_search") and "vector_search" in self.retrievers
+        use_bm25 = strategy.get("use_bm25_search") and "bm25_search" in self.retrievers
+
+        # Fallback: 当没有可用 retriever 时，使用 page_store.search_pages()
+        if not has_retrievers or (not use_vector and not use_bm25):
+            logger.debug("GAMResearcher: Using page_store.search_pages() as fallback")
+            filters = {"plan_id": plan_id} if plan_id else None
+
+            for sq in search_queries:
+                page_results = self.page_store.search_pages(sq, top_k=top_k, filters=filters)
+                for page, score in page_results:
+                    if page.page_id not in all_page_scores:
+                        all_page_scores[page.page_id] = score
+                    else:
+                        all_page_scores[page.page_id] = max(all_page_scores[page.page_id], score)
+
+            # 按得分排序返回
+            sorted_pages = sorted(all_page_scores.items(), key=lambda x: x[1], reverse=True)
+            for page_id, _ in sorted_pages[:top_k]:
+                page = self.page_store.get_page(page_id)
+                if page:
+                    pages.append(page)
+
+            return memos, pages
+
+        # 使用 retrievers 进行搜索
         pages_list = list(self.page_store.iter_pages())
 
         if not pages_list:
@@ -334,7 +374,7 @@ class GAMResearcher:
 
         for sq in search_queries:
             # 向量搜索
-            if strategy.get("use_vector_search") and "vector_search" in self.retrievers:
+            if use_vector:
                 vector_retriever = self.retrievers["vector_search"]
                 vector_retriever.index_documents(documents)
                 vector_results = vector_retriever.search(sq, top_k=top_k)
@@ -346,7 +386,7 @@ class GAMResearcher:
                         all_page_scores[page_id] = all_page_scores.get(page_id, 0) + score * vector_weight
 
             # BM25 搜索
-            if strategy.get("use_bm25_search") and "bm25_search" in self.retrievers:
+            if use_bm25:
                 bm25_retriever = self.retrievers["bm25_search"]
                 bm25_retriever.index_documents(documents)
                 bm25_results = bm25_retriever.search(sq, top_k=top_k)

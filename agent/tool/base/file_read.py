@@ -73,8 +73,15 @@ def read_file(
     Reads files within the workspace boundary, returning content with
     line numbers (cat -n style). Supports pagination via offset/limit.
 
+    IMPORTANT: File paths are relative to the workspace (storage root).
+    - User uploaded files are at: chat/{user_id}/{conversation_id}/filename
+    - Check SYSTEM CONTEXT for the correct file_storage_path
+    - Use the full path: read_file("chat/user123/conv456/api.yaml")
+
     Args:
-        file_path: Path to file (relative to workspace or absolute)
+        file_path: Path to file (relative to workspace).
+                   For uploaded files, use: "chat/{user_id}/{conversation_id}/filename"
+                   The user_id and conversation_id are in SYSTEM CONTEXT.
         offset: Line number to start reading from (0-indexed, default 0)
         limit: Maximum number of lines to read (default 2000)
 
@@ -89,8 +96,11 @@ def read_file(
         On error, returns JSON with status, error_code, and message.
 
     Example:
-        read_file("src/main.py")
-        read_file("config/settings.json", offset=100, limit=50)
+        # Read uploaded file (use path from SYSTEM CONTEXT)
+        read_file("chat/user123/conv456/api_spec.yaml")
+
+        # Read with pagination
+        read_file("chat/user123/conv456/large_file.json", offset=100, limit=50)
 
     Notes:
         - Lines longer than 2000 characters are truncated
