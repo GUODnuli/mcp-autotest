@@ -387,6 +387,15 @@ class WorkerRunner:
             result.status = TaskStatus.SUCCESS
             result.iterations = 1
 
+            # 将 single 模式的输出推入消息队列，使前端能收到实时内容
+            if self.message_queue is not None and response:
+                msg = Msg(
+                    name=config.name,
+                    content=response,
+                    role="assistant",
+                )
+                await self.message_queue.put((msg, True))
+
         except asyncio.TimeoutError:
             raise
         except Exception as exc:

@@ -382,6 +382,16 @@ async def main():
         storage_cache_dir.mkdir(parents=True, exist_ok=True)
         ToolConfig.get().add_allowed_path(storage_cache_dir)
 
+    # 添加额外允许路径（用于挂载的被测项目目录）
+    # 参考 Claude Code 的做法：通过环境变量声明可访问的项目路径
+    extra_paths = os.environ.get("WORKSPACE_EXTRA_PATHS", "")
+    if extra_paths:
+        for p in extra_paths.split(":"):
+            p = p.strip()
+            if p and Path(p).exists():
+                ToolConfig.get().add_allowed_path(Path(p))
+                print(f"[OK] 已添加额外允许路径: {p}")
+
     # 配置 Hook
     AgentHooks.url = args.studio_url
     AgentHooks.reply_id = args.reply_id

@@ -136,7 +136,9 @@ def execute_shell(command: str, timeout: int = 120) -> ToolResponse:
     if platform.system() == "Windows":
         shell_cmd = ["powershell", "-Command", command]
     else:
-        shell_cmd = ["/bin/bash", "-c", command]
+        import shutil
+        shell_path = shutil.which("bash") or shutil.which("sh") or "/bin/sh"
+        shell_cmd = [shell_path, "-c", command]
 
     try:
         result = subprocess.run(

@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { getPrisma } from '../../config/database.js';
 import { getRedis } from '../../config/redis.js';
 import { getLogger } from '../../config/logger.js';
@@ -282,7 +283,7 @@ export async function createMessageWithMetadataInternal(
       conversationId,
       role,
       content,
-      metadata,
+      metadata: metadata as Prisma.InputJsonValue,
     },
   });
 

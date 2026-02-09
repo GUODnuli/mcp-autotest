@@ -245,6 +245,15 @@ class WorkerLoader:
             logger.warning("Invalid mode '%s' in %s, using 'react'", mode, file_path)
             mode = "react"
 
+        # 警告: single 模式下声明的工具不会被使用
+        if mode == "single" and tools:
+            logger.warning(
+                "Worker '%s' declares tools %s but uses mode='single'. "
+                "Tools are only available in 'react' mode. "
+                "Change to mode='react' if tool usage is needed.",
+                metadata.get("name", file_path.stem), tools,
+            )
+
         # 其他配置
         model = metadata.get("model")
         max_iterations = int(metadata.get("max_iterations", 10))

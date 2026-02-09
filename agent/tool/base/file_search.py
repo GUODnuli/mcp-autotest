@@ -155,15 +155,16 @@ def glob_files(
         total_matches = len(file_matches)
         file_matches = file_matches[:limit]
 
-        # Convert to relative paths
+        # Convert to displayable paths
         relative_paths = []
         for match in file_matches:
             try:
                 rel_path = match.relative_to(config.workspace)
                 relative_paths.append(str(rel_path).replace("\\", "/"))
             except ValueError:
-                # Should not happen due to prior validation, but handle gracefully
-                continue
+                # File is under an extra allowed path (not workspace root)
+                # Use absolute path so the agent can reference it
+                relative_paths.append(str(match).replace("\\", "/"))
 
         # Format output
         if not relative_paths:
@@ -305,11 +306,12 @@ def grep_files(
             content = file_path.read_text(encoding="utf-8", errors="ignore")
             lines = content.splitlines()
 
-            # Get relative path
+            # Get displayable path
             try:
                 rel_path = str(file_path.relative_to(config.workspace)).replace("\\", "/")
             except ValueError:
-                continue
+                # File is under an extra allowed path
+                rel_path = str(file_path).replace("\\", "/")
 
             # Search lines
             for line_num, line in enumerate(lines, start=1):

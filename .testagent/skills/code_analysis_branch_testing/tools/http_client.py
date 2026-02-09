@@ -7,9 +7,15 @@ HTTP 通信工具集
 """
 
 import json
+import time
 from typing import Any, Dict, List, Optional
 from agentscope.tool import ToolResponse
 from agentscope.message import TextBlock
+
+try:
+    import requests as _requests
+except ImportError:
+    _requests = None
 
 
 def send_request(
@@ -100,17 +106,61 @@ def send_request(
         if query_params:
             request_info["query_params"] = query_params
         
-        # 模拟发送请求（实际实现会使用 requests/aiohttp）
-        mock_response = _mock_send_request(method, url, headers, body)
-        
+        # 发送真实 HTTP 请求
+        if _requests is None:
+            return ToolResponse(
+                content=[TextBlock(
+                    type="text",
+                    text=json.dumps({
+                        "status": "error",
+                        "error_code": "MISSING_DEPENDENCY",
+                        "message": "requests library not installed. Run: pip install requests"
+                    }, ensure_ascii=False)
+                )]
+            )
+
+        actual_headers = headers or {"Content-Type": "application/json"}
+        start_time = time.time()
+
+        resp = _requests.request(
+            method=method.upper(),
+            url=url,
+            headers=actual_headers,
+            json=body if body and method.upper() in ("POST", "PUT", "PATCH") else None,
+            params=query_params,
+            timeout=timeout,
+            verify=verify_ssl,
+        )
+
+        elapsed_ms = int((time.time() - start_time) * 1000)
+
+        # 解析响应体
+        try:
+            response_body = resp.json()
+        except (json.JSONDecodeError, ValueError):
+            response_body = resp.text
+
+        response_data = {
+            "response": {
+                "status_code": resp.status_code,
+                "status_text": resp.reason,
+                "headers": dict(resp.headers),
+                "body": response_body,
+                "elapsed_ms": elapsed_ms,
+            },
+            "timing": {
+                "total_ms": elapsed_ms,
+            },
+        }
+
         return ToolResponse(
             content=[TextBlock(
                 type="text",
                 text=json.dumps({
                     "status": "success",
                     "request": request_info,
-                    **mock_response
-                }, ensure_ascii=False)
+                    **response_data
+                }, ensure_ascii=False, default=str)
             )]
         )
     
@@ -337,81 +387,6 @@ def validate_response(
                 }, ensure_ascii=False)
             )]
         )
-
-
-# ==================== Mock 实现 ====================
-
-def _mock_send_request(
-    method: str,
-    url: str,
-    headers: Dict[str, str],
-    body: Dict[str, Any]
-) -> Dict:
-    """模拟 HTTP 请求响应"""
-    
-    # 根据请求内容生成响应
-    service_id = headers.get("service_id", "") if headers else ""
-    
-    # 贷款申请服务响应
-    if "LOAN" in service_id.upper() or (body and "loan_id" in body):
-        amount = body.get("amount", 0) if body else 0
-        
-        # 根据金额判断分支
-        if amount > 1000000:
-            response_body = {
-                "code": "SUCCESS",
-                "message": "Application submitted, pending review",
-                "data": {
-                    "loan_id": body.get("loan_id", "TEST001"),
-                    "status": "PENDING_REVIEW",
-                    "review_required": True,
-                    "amount": amount
-                }
-            }
-        else:
-            response_body = {
-                "code": "SUCCESS",
-                "message": "Application auto approved",
-                "data": {
-                    "loan_id": body.get("loan_id", "TEST001"),
-                    "status": "AUTO_APPROVED",
-                    "review_required": False,
-                    "amount": amount
-                }
-            }
-    
-    # 信用查询服务响应
-    elif "CREDIT" in service_id.upper():
-        response_body = {
-            "code": "SUCCESS",
-            "data": {
-                "credit_score": 750,
-                "risk_level": "LOW"
-            }
-        }
-    
-    # 默认响应
-    else:
-        response_body = {
-            "code": "SUCCESS",
-            "message": "Operation completed"
-        }
-    
-    return {
-        "response": {
-            "status_code": 200,
-            "status_text": "OK",
-            "headers": {"Content-Type": "application/json"},
-            "body": response_body,
-            "elapsed_ms": 245
-        },
-        "timing": {
-            "dns_lookup_ms": 12,
-            "connection_ms": 25,
-            "ttfb_ms": 180,
-            "total_ms": 245
-        }
-    }
 
 
 def _infer_branch_triggered(body: Dict, json_path_checks: Dict) -> str:
