@@ -417,6 +417,10 @@ async def main():
     settings_path = str(project_root / ".testagent" / "settings.json")
     toolkit, mcp_clients = await setup_toolkit(toolkit, settings_path=settings_path)
 
+    # 注册 reset_equipped_tools 到基础工具组，允许所有 Worker 动态激活/停用工具组
+    # 这是 AgentScope 内置方法，Worker 调用 reset_equipped_tools(group_name=True) 即可激活对应工具组
+    toolkit.register_tool_function(toolkit.reset_equipped_tools)
+
     # 获取模型
     # 流式模型用于 Coordinator 的直接 LLM 调用（任务规划、评估等）
     model = get_model(

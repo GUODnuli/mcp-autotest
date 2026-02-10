@@ -230,9 +230,18 @@ def build_soa_request(
         send_request(**config)
     """
     try:
-        # 默认网关地址
+        # 网关地址（必须由调用者指定，不使用默认值避免误导）
         if not gateway_url:
-            gateway_url = "http://gateway.bank.com/api/soa/invoke"
+            return ToolResponse(
+                content=[TextBlock(
+                    type="text",
+                    text=json.dumps({
+                        "status": "error",
+                        "error_code": "MISSING_GATEWAY_URL",
+                        "message": "gateway_url is required. Use the actual service base_url + endpoint path (e.g., 'http://host.docker.internal:40000/api/loan/apply'). Do NOT use build_soa_request for direct REST API calls — use send_request or execute_api_test instead."
+                    }, ensure_ascii=False)
+                )]
+            )
         
         # 构建 SOA 标准头
         soa_headers = {

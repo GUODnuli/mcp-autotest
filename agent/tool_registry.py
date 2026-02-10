@@ -127,14 +127,22 @@ def _register_tool_groups(toolkit: Toolkit, tool_groups: List[ToolGroupDefinitio
             toolkit.register_tool_function(tool, group_name=group_def.group_name)
 
 
-def _ensure_tool_group(toolkit: Toolkit, group_name: str, display_name: str = "") -> None:
-    """确保工具组存在，不存在则创建"""
+def _ensure_tool_group(toolkit: Toolkit, group_name: str, display_name: str = "", notes: str = "") -> None:
+    """确保工具组存在，不存在则创建
+
+    Args:
+        toolkit: AgentScope Toolkit 实例
+        group_name: 工具组名称
+        display_name: 工具组描述（用于 reset_equipped_tools 参数说明）
+        notes: 工具组使用指南（激活后返回给 Worker 的操作说明）
+    """
     try:
         toolkit.create_tool_group(
             group_name=group_name,
             description=display_name or group_name,
+            notes=notes or None,
         )
-        logger.info("Created tool group '%s' for MCP server", group_name)
+        logger.info("Created tool group '%s'", group_name)
     except Exception:
         # 组已存在，忽略
         pass
@@ -262,6 +270,45 @@ def _parse_skill_metadata(skill_path: Path) -> Dict[str, Any]:
         return {}
 
 
+def _build_skill_notes(skill_name: str, description: str, tool_names: List[str], skill_path: Path) -> str:
+    """
+    构建技能工具组的使用指南（notes），激活工具组时返回给 Worker。
+
+    Args:
+        skill_name: 技能名称
+        description: 技能描述
+        tool_names: 工具函数名列表
+        skill_path: SKILL.md 路径，用于提取工作流指南
+
+    Returns:
+        格式化的使用指南字符串
+    """
+    lines = [
+        f"[{skill_name}] {description}",
+        f"Available tools: {', '.join(tool_names)}",
+    ]
+
+    # 从 SKILL.md 提取 Workflow 段落作为简要指南
+    try:
+        content = skill_path.read_text(encoding="utf-8")
+        # 去除 frontmatter
+        body_match = re.search(r'^---\s*\n.*?\n---\s*\n(.*)', content, re.DOTALL)
+        if body_match:
+            body = body_match.group(1)
+            # 提取 ## Workflow 段落（到下一个 ## 为止）
+            wf_match = re.search(r'## Workflow\s*\n(.*?)(?=\n## |\Z)', body, re.DOTALL)
+            if wf_match:
+                workflow = wf_match.group(1).strip()
+                # 只保留前 500 字符避免 notes 过长
+                if len(workflow) > 500:
+                    workflow = workflow[:500] + "..."
+                lines.append(f"Workflow:\n{workflow}")
+    except Exception:
+        pass
+
+    return "\n".join(lines)
+
+
 def _register_skills(toolkit: Toolkit, skills_dir: Path, global_settings: Dict[str, Any]) -> None:
     """
     从 .testagent/skills/ 加载并注册技能及其工具。
@@ -308,8 +355,12 @@ def _register_skills(toolkit: Toolkit, skills_dir: Path, global_settings: Dict[s
                     group_name = f"{skill_name.replace('-', '_')}_tools"
                     description = metadata.get("description", f"Tools for {skill_name} skill")
 
-                    # Ensure group exists
-                    _ensure_tool_group(toolkit, group_name, description)
+                    # Build notes from skill metadata for Worker guidance
+                    tool_names = [t.__name__ for t in tools]
+                    notes = _build_skill_notes(skill_name, description, tool_names, skill_path)
+
+                    # Ensure group exists (with notes for reset_equipped_tools)
+                    _ensure_tool_group(toolkit, group_name, description, notes=notes)
 
                     # Register each tool function (skip duplicates)
                     for tool_func in tools:
